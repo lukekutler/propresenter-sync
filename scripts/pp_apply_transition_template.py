@@ -420,6 +420,17 @@ def build_topic_cue(topic: str, media_info: Optional[dict[str, Any]]) -> cue_pb2
     slide_action.layer_identification.name = "Slides"
     slide_action.slide.presentation.CopyFrom(build_transition_slide())
 
+    # Add clear props action
+    clear_props_action = cue.actions.add()
+    clear_props_action.uuid.string = new_uuid()
+    clear_props_action.name = "Clear Props"
+    clear_props_action.type = action_pb2.Action.ActionType.ACTION_TYPE_CLEAR
+    clear_props_action.isEnabled = True
+    clear_props_action.delay_time = 0.0
+    clear_props_action.label.text = ''
+    set_color(clear_props_action.label.color, 0.054, 0.211, 0.588, 1.0)
+    clear_props_action.clear.target_layer = action_pb2.Action.ClearType.ClearTargetLayer.CLEAR_TARGET_LAYER_PROP
+
     attached_media = add_media_file_action(cue, media_info)
     if not attached_media:
         add_media_playlist_action(cue, topic, media_info)
@@ -562,6 +573,20 @@ def rebuild_transition_presentation(path: str, label: str, audience_look_name: s
     add_audience_look_action(base_cue, audience_look_name)
     add_stage_layout_action(base_cue, stage_layout_info)
     add_countdown_timer_action(base_cue, timer_seconds, timer_info)
+    
+    # Add Logo prop action to base cue
+    if prop_info and isinstance(prop_info, dict):
+        prop_action = base_cue.actions.add()
+        prop_action.uuid.string = new_uuid()
+        prop_action.name = f"Prop • {CLEAR_PROP_NAME}"
+        prop_action.type = action_pb2.Action.ActionType.ACTION_TYPE_PROP
+        prop_action.isEnabled = True
+        prop_action.delay_time = 0.0
+        prop_action.label.text = ''
+        set_color(prop_action.label.color, 0.054, 0.211, 0.588, 1.0)
+        if 'propUuid' in prop_info:
+            prop_action.prop.identification.parameter_uuid.string = prop_info['propUuid']
+        prop_action.prop.identification.parameter_name = CLEAR_PROP_NAME
 
     topic_entries: list[tuple[str, Optional[dict[str, Any]]]] = []
     if topic_specs:
@@ -584,7 +609,8 @@ def rebuild_transition_presentation(path: str, label: str, audience_look_name: s
     cues_to_write: list[cue_pb2.Cue] = [base_cue]
     for idx, (topic_text, media_payload) in enumerate(topic_entries):
         cues_to_write.append(build_topic_cue(topic_text, media_payload))
-        if idx < len(topic_entries) - 1:
+        # Add CLEAR cue between topics and after the last topic
+        if idx < len(topic_entries) - 1 or topic_entries:  # Add clear if there are any topics
             cues_to_write.append(build_clear_cue(prop_info))
 
     doc.cues.clear()
