@@ -1,0 +1,22 @@
+import sys
+from src.gen.propresenter import presentation_pb2  # rv.data.Presentation
+
+if len(sys.argv) < 3:
+    print("Usage: python scripts/pp_set_operator_notes.py /full/path/to/file.pro 'new notes text'")
+    sys.exit(1)
+
+path = sys.argv[1]
+new_notes = " ".join(sys.argv[2:])  # allow spaces without extra quoting
+
+doc = presentation_pb2.Presentation()
+with open(path, "rb") as f:
+    doc.ParseFromString(f.read())
+
+print("Current operator notes:", repr(doc.notes))
+
+doc.notes = new_notes  # <-- this is the Operator Notes field
+with open(path, "wb") as f:
+    f.write(doc.SerializeToString())
+
+print("✅ Wrote operator notes to:", path)
+print("New operator notes:", repr(new_notes))

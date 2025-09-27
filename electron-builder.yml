@@ -1,0 +1,14 @@
+
+appId: com.yourorg.propresenter-sync
+productName: ProPresenter Sync
+files:
+  - dist/**
+  - dist-electron/**
+  - package.json
+mac:
+  target: dmg
+win:
+  target: nsis
+extraResources:
+  - from: ./data
+    to: data

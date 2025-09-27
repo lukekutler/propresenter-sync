@@ -415,8 +415,8 @@ def build_topic_cue(topic: str, media_info: Optional[dict[str, Any]]) -> cue_pb2
     slide_action.isEnabled = True
     slide_action.delay_time = 0.0
     slide_action.label.text = topic
-    set_color(slide_action.label.color, 0.054, 0.211, 0.588, 1.0)
-    slide_action.layer_identification.uuid.string = new_uuid()
+    set_color(slide_action.label.color, 0.694, 0.231, 1.0, 1.0)  # Purple B13BFF
+    slide_action.layer_identification.uuid.string = "slides"  # Fixed ID for slide layer
     slide_action.layer_identification.name = "Slides"
     slide_action.slide.presentation.CopyFrom(build_transition_slide())
 
@@ -454,8 +454,8 @@ def build_clear_cue(prop_info: Optional[dict[str, Any]]) -> cue_pb2.Cue:
     slide_action.isEnabled = True
     slide_action.delay_time = 0.0
     slide_action.label.text = CLEAR_LABEL
-    set_color(slide_action.label.color, 0.054, 0.211, 0.588, 1.0)
-    slide_action.layer_identification.uuid.string = new_uuid()
+    set_color(slide_action.label.color, 0.0, 0.0, 0.0, 1.0)  # Black color
+    slide_action.layer_identification.uuid.string = "slides"  # Fixed ID for slide layer
     slide_action.layer_identification.name = "Slides"
     slide_action.slide.presentation.CopyFrom(build_transition_slide())
 
@@ -559,9 +559,9 @@ def rebuild_transition_presentation(path: str, label: str, audience_look_name: s
     base_slide_action.type = action_pb2.Action.ActionType.ACTION_TYPE_PRESENTATION_SLIDE
     base_slide_action.isEnabled = True
     base_slide_action.delay_time = 0.0
-    base_slide_action.label.text = ''
-    set_color(base_slide_action.label.color, 0.054, 0.211, 0.588, 1.0)
-    base_slide_action.layer_identification.uuid.string = new_uuid()
+    base_slide_action.label.text = label
+    set_color(base_slide_action.label.color, 0.694, 0.231, 1.0, 1.0)  # Purple B13BFF
+    base_slide_action.layer_identification.uuid.string = "slides"  # Fixed ID for slide layer
     base_slide_action.layer_identification.name = "Slides"
     base_slide_action.slide.presentation.CopyFrom(build_transition_slide())
 
@@ -617,6 +617,23 @@ def rebuild_transition_presentation(path: str, label: str, audience_look_name: s
     for cue in cues_to_write:
         doc.cues.add().CopyFrom(cue)
 
+    # Create a single basic group to maintain structure
+    doc.cue_groups.clear()
+    group = doc.cue_groups.add()
+    group.group.uuid.string = new_uuid()
+    group.group.name = "Slides"  # Simple generic name
+    group.group.application_group_identifier.string = new_uuid()
+    group.group.application_group_name = "Slides"
+    for cue in doc.cues:
+        group.cue_identifiers.add().string = cue.uuid.string
+
+    # Ensure there's a default arrangement
+    doc.arrangements.clear()
+    arrangement = doc.arrangements.add()
+    arrangement.uuid.string = new_uuid()
+    arrangement.name = "Default"
+    arrangement.group_identifiers.add().string = group.group.uuid.string
+
     # Debug log before writing
     for idx, cue in enumerate(doc.cues):
         print(f"DEBUG: Cue {idx}: {cue.name} has {len(cue.actions)} actions:", flush=True)
@@ -624,11 +641,6 @@ def rebuild_transition_presentation(path: str, label: str, audience_look_name: s
             print(f"  Action {action_idx}: type={action.type} name={action.name}", flush=True)
             if action.type == action_pb2.Action.ActionType.ACTION_TYPE_PROP:
                 print(f"    Prop details: name={action.prop.identification.parameter_name}", flush=True)
-
-    written_cues = [doc.cues[idx] for idx in range(len(doc.cues))]
-    group = ensure_group(doc, [cue.uuid.string for cue in written_cues], label)
-    assign_group_to_slide_actions(written_cues, group.group.uuid.string, group.group.name)
-    ensure_arrangement(doc, group.group.uuid.string)
 
     try:
         write_presentation_bytes(target_file, doc, zip_member, infos, data_map)

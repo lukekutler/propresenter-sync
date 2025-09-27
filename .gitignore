@@ -1,0 +1,34 @@
+# Node
+node_modules/
+dist/
+dist-electron/
+
+# Env files
+.env
+*.env.local
+src/.env
+src/lib/.env
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pydeps/
+
+# Editor
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Build outputs
+*.pro
+!sample_transition.pro
+!test_transition_zip.pro
+!sample_transition_zip.pro

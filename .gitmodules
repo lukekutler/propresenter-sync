@@ -1,0 +1,3 @@
+[submodule "vendor/propresenter-protos"]
+	path = vendor/propresenter-protos
+	url = https://github.com/greyshirtguy/ProPresenter7-Proto.git

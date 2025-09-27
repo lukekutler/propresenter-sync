@@ -1,0 +1,343 @@
+
+---
+
+## Announcement
+
+- `GET /v1/announcement/active` — Requests the currently active announcement presentation.
+- `GET /v1/announcement/slide_index` — Requests the index of the current slide/cue within the currently active announcement.
+- `GET /v1/announcement/active/focus` — Focuses the currently active announcement presentation.
+- `GET /v1/announcement/active/trigger` — Retriggers the currently active announcement presentation (starts from beginning).
+- `GET /v1/announcement/active/next/trigger` — Triggers the next cue in the active announcement presentation.
+- `GET /v1/announcement/active/previous/trigger` — Triggers the previous cue in the active announcement presentation.
+- `GET /v1/announcement/active/{index}/trigger` — Triggers the specified cue in the active announcement presentation.
+- `GET /v1/announcement/active/timeline/{operation}` — Performs the requested timeline operation for the active announcement presentation.
+- `GET /v1/announcement/active/timeline` — Requests the current state of the active announcement timeline.
+
+---
+
+## Audio
+
+- `GET /v1/audio/playlists`
+- `GET /v1/audio/playlist/{playlist_id}`
+- `GET /v1/audio/playlist/{playlist_id}/updates`
+- `GET /v1/audio/playlist/focused`
+- `GET /v1/audio/playlist/active`
+- `GET /v1/audio/playlist/next/focus`
+- `GET /v1/audio/playlist/previous/focus`
+- `GET /v1/audio/playlist/active/focus`
+- `GET /v1/audio/playlist/{playlist_id}/focus`
+- `GET /v1/audio/playlist/focused/trigger`
+- `GET /v1/audio/playlist/active/trigger`
+- `GET /v1/audio/playlist/{playlist_id}/trigger`
+- `GET /v1/audio/playlist/{playlist_id}/{id}/trigger`
+- `GET /v1/audio/playlist/focused/next/trigger`
+- `GET /v1/audio/playlist/focused/previous/trigger`
+- `GET /v1/audio/playlist/focused/{id}/trigger`
+- `GET /v1/audio/playlist/active/next/trigger`
+- `GET /v1/audio/playlist/active/previous/trigger`
+- `GET /v1/audio/playlist/active/{id}/trigger`
+- `GET /v1/audio/playlist/{playlist_id}/next/trigger`
+- `GET /v1/audio/playlist/{playlist_id}/previous/trigger`
+
+---
+
+## Capture
+
+- `GET /v1/capture/status`
+- `GET /v1/capture/{operation}`
+- `GET /v1/capture/settings`
+- `GET /v1/capture/encodings/{type}`
+
+---
+
+## Clear
+
+- `GET /v1/clear/layer/{layer}`
+- `GET /v1/clear/group/{id}`
+- `PUT /v1/clear/group/{id}`
+- `DELETE /v1/clear/group/{id}`
+- `GET /v1/clear/group/{id}/icon`
+- `PUT /v1/clear/group/{id}/icon`
+- `GET /v1/clear/group/{id}/trigger`
+- `GET /v1/clear/groups`
+- `POST /v1/clear/groups`
+
+---
+
+## Global Groups
+
+- `GET /v1/groups`
+
+---
+
+## Library
+
+- `GET /v1/libraries`
+- `GET /v1/library/{library_id}`
+- `GET /v1/library/{library_id}/{presentation_id}/trigger`
+- `GET /v1/library/{library_id}/{presentation_id}/{index}/trigger`
+
+---
+
+## Looks
+
+- `GET /v1/looks`
+- `POST /v1/looks`
+- `GET /v1/look/current`
+- `PUT /v1/look/current`
+- `GET /v1/look/{id}`
+- `PUT /v1/look/{id}`
+- `DELETE /v1/look/{id}`
+- `GET /v1/look/{id}/trigger`
+
+---
+
+## Macro
+
+- `GET /v1/macros`
+- `GET /v1/macro/{id}`
+- `PUT /v1/macro/{id}`
+- `DELETE /v1/macro/{id}`
+- `GET /v1/macro/{id}/trigger`
+- `GET /v1/macro/{id}/icon`
+- `PUT /v1/macro/{id}/icon`
+- `GET /v1/macro_collections`
+- `POST /v1/macro_collections`
+- `GET /v1/macro_collection/{id}`
+- `PUT /v1/macro_collection/{id}`
+- `DELETE /v1/macro_collection/{id}`
+
+---
+
+## Masks
+
+- `GET /v1/masks`
+- `GET /v1/mask/{id}`
+- `GET /v1/mask/{id}/thumbnail`
+
+---
+
+## Media
+
+- `GET /v1/media/playlists`
+- `GET /v1/media/playlist/{playlist_id}`
+- `GET /v1/media/playlist/{playlist_id}/updates`
+- `GET /v1/media/{uuid}/thumbnail`
+- `GET /v1/media/playlist/focused`
+- `GET /v1/media/playlist/active`
+- `GET /v1/media/playlist/next/focus`
+- `GET /v1/media/playlist/previous/focus`
+- `GET /v1/media/playlist/active/focus`
+- `GET /v1/media/playlist/{playlist_id}/focus`
+- `GET /v1/media/playlist/focused/trigger`
+- `GET /v1/media/playlist/active/trigger`
+- `GET /v1/media/playlist/{playlist_id}/trigger`
+- `GET /v1/media/playlist/focused/next/trigger`
+- `GET /v1/media/playlist/focused/previous/trigger`
+- `GET /v1/media/playlist/focused/{media_id}/trigger`
+- `GET /v1/media/playlist/active/next/trigger`
+- `GET /v1/media/playlist/active/previous/trigger`
+- `GET /v1/media/playlist/active/{media_id}/trigger`
+- `GET /v1/media/playlist/{playlist_id}/next/trigger`
+- `GET /v1/media/playlist/{playlist_id}/previous/trigger`
+- `GET /v1/media/playlist/{playlist_id}/{media_id}/trigger`
+
+---
+
+## Message
+
+- `GET /v1/messages`
+- `POST /v1/messages`
+- `GET /v1/message/{id}`
+- `PUT /v1/message/{id}`
+- `DELETE /v1/message/{id}`
+- `POST /v1/message/{id}/trigger`
+- `GET /v1/message/{id}/clear`
+
+---
+
+## Miscellaneous
+
+- `GET /v1/find_my_mouse`
+
+---
+
+## Playlist
+
+- `GET /v1/playlists`
+- `POST /v1/playlists`
+- `GET /v1/playlist/{playlist_id}`
+- `PUT /v1/playlist/{playlist_id}`
+- `POST /v1/playlist/{playlist_id}`
+- `GET /v1/playlist/active`
+- `GET /v1/playlist/focused`
+- `GET /v1/playlist/next/focus`
+- `GET /v1/playlist/previous/focus`
+- `GET /v1/playlist/active/presentation/focus`
+- `GET /v1/playlist/active/announcement/focus`
+- `GET /v1/playlist/active/presentation/{index}/thumbnail/{cue_index}`
+- `GET /v1/playlist/active/announcement/{index}/thumbnail/{cue_index}`
+- `GET /v1/playlist/{playlist_id}/{index}/thumbnail/{cue_index}`
+- `GET /v1/playlist/focused/trigger`
+- `GET /v1/playlist/active/presentation/trigger`
+- `GET /v1/playlist/active/announcement/trigger`
+- `GET /v1/playlist/focused/next`
+- `GET /v1/playlist/focused/previous`
+- `GET /v1/playlist/focused/next/trigger`
+- `GET /v1/playlist/focused/previous/trigger`
+- `GET /v1/playlist/{playlist_id}/updates`
+- `GET /v1/playlist/{playlist_id}/focus`
+- `GET /v1/playlist/{playlist_id}/trigger`
+- `GET /v1/playlist/{playlist_id}/next/trigger`
+- `GET /v1/playlist/{playlist_id}/previous/trigger`
+- `GET /v1/playlist/{playlist_id}/{index}/trigger`
+- `GET /v1/playlist/focused/{index}/trigger`
+- `GET /v1/playlist/active/presentation/{index}/trigger`
+- `GET /v1/playlist/active/announcement/{index}/trigger`
+
+---
+
+## Presentation
+
+- `GET /v1/presentation/active`
+- `GET /v1/presentation/focused`
+- `GET /v1/presentation/slide_index`
+- `GET /v1/presentation/chord_chart`
+- `GET /v1/presentation/chord_chart/updates`
+- `GET /v1/presentation/{uuid}`
+- `GET /v1/presentation/active/timeline`
+- `GET /v1/presentation/focused/timeline`
+- `GET /v1/presentation/active/timeline/{operation}`
+- `GET /v1/presentation/focused/timeline/{operation}`
+- `GET /v1/presentation/{uuid}/timeline/{operation}`
+- `GET /v1/presentation/{uuid}/thumbnail/{index}`
+- `GET /v1/presentation/next/focus`
+- `GET /v1/presentation/previous/focus`
+- `GET /v1/presentation/active/focus`
+- `GET /v1/presentation/{uuid}/focus`
+- `GET /v1/presentation/focused/trigger`
+- `GET /v1/presentation/focused/next/trigger`
+- `GET /v1/presentation/focused/previous/trigger`
+- `GET /v1/presentation/focused/{index}/trigger`
+- `GET /v1/presentation/active/trigger`
+- `GET /v1/presentation/active/next/trigger`
+- `GET /v1/presentation/active/previous/trigger`
+- `GET /v1/presentation/active/{index}/trigger`
+- `GET /v1/presentation/{uuid}/trigger`
+- `GET /v1/presentation/{uuid}/next/trigger`
+- `GET /v1/presentation/{uuid}/previous/trigger`
+- `GET /v1/presentation/{uuid}/{index}/trigger`
+- `GET /v1/presentation/focused/group/{group_id}/trigger`
+- `GET /v1/presentation/active/group/{group_id}/trigger`
+- `GET /v1/presentation/{uuid}/group/{group_id}/trigger`
+
+---
+
+## Prop
+
+- `GET /v1/props`
+- `GET /v1/prop/{id}`
+- `PUT /v1/prop/{id}`
+- `DELETE /v1/prop/{id}`
+- `GET /v1/prop/{id}/trigger`
+- `GET /v1/prop/{id}/clear`
+- `GET /v1/prop/{id}/auto_clear/pause`
+- `GET /v1/prop/{id}/auto_clear/resume`
+- `GET /v1/prop/{id}/thumbnail`
+- `GET /v1/prop_collections`
+- `POST /v1/prop_collections`
+- `GET /v1/prop_collection/{id}`
+- `PUT /v1/prop_collection/{id}`
+- `DELETE /v1/prop_collection/{id}`
+
+---
+
+## Stage
+
+- `GET /v1/stage/message`
+- `PUT /v1/stage/message`
+- `DELETE /v1/stage/message`
+- `GET /v1/stage/layout_map`
+- `PUT /v1/stage/layout_map`
+- `GET /v1/stage/screens`
+- `GET /v1/stage/screen/{id}/layout`
+- `GET /v1/stage/screen/{id}/layout/{layout_id}`
+- `GET /v1/stage/layouts`
+- `DELETE /v1/stage/layout/{id}`
+- `GET /v1/stage/layout/{id}/thumbnail`
+
+---
+
+## Status
+
+- `GET /version`
+- `GET /v1/status/layers`
+- `GET /v1/status/stage_screens`
+- `PUT /v1/status/stage_screens`
+- `GET /v1/status/audience_screens`
+- `PUT /v1/status/audience_screens`
+- `GET /v1/status/screens`
+- `GET /v1/status/slide`
+- `POST /v1/status/updates`
+
+---
+
+## Theme
+
+- `GET /v1/themes`
+- `GET /v1/theme/{id}`
+- `GET /v1/theme/{id}/slides/{theme_slide}`
+- `PUT /v1/theme/{id}/slides/{theme_slide}`
+- `GET /v1/theme/{id}/slides/{theme_slide}/thumbnail`
+
+---
+
+## Timer
+
+- `GET /v1/timers`
+- `POST /v1/timers`
+- `GET /v1/timers/current`
+- `GET /v1/timers/{operation}`
+- `GET /v1/timer/{id}`
+- `PUT /v1/timer/{id}`
+- `DELETE /v1/timer/{id}`
+- `GET /v1/timer/{id}/{operation}`
+- `PUT /v1/timer/{id}/{operation}`
+- `GET /v1/timer/{id}/increment/{time}`
+- `GET /v1/timer/system_time`
+- `GET /v1/timer/video_countdown`
+
+---
+
+## Transport
+
+- `GET /v1/transport/{layer}/play`
+- `GET /v1/transport/{layer}/pause`
+- `GET /v1/transport/{layer}/skip_backward/{time}`
+- `GET /v1/transport/{layer}/skip_forward/{time}`
+- `GET /v1/transport/{layer}/go_to_end`
+- `GET /v1/transport/{layer}/time`
+- `PUT /v1/transport/{layer}/time`
+- `GET /v1/transport/{layer}/auto_advance`
+- `DELETE /v1/transport/{layer}/auto_advance`
+- `GET /v1/transport/{layer}/current`
+
+---
+
+## Trigger
+
+- `GET /v1/trigger/media/next`
+- `GET /v1/trigger/media/previous`
+- `GET /v1/trigger/audio/next`
+- `GET /v1/trigger/audio/previous`
+- `GET /v1/trigger/next`
+- `GET /v1/trigger/previous`
+
+---
+
+## Video Input
+
+- `GET /v1/video_inputs`
+- `GET /v1/video_inputs/{id}/trigger`
+
+---

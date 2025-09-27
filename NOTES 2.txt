@@ -1,0 +1,86 @@
+✅ Working Solution for Updating ProPresenter Operator Notes
+
+1. Generate Python Bindings from ProPresenter Protobufs
+-------------------------------------------------------
+- Clone the official proto repo:
+  gh repo clone greyshirtguy/ProPresenter7-Proto vendor/propresenter-protos
+
+- Compile them into Python modules:
+  mkdir -p src/gen
+  protoc     --proto_path=vendor/propresenter-protos     --python_out=src/gen     $(find vendor/propresenter-protos -type f -name '*.proto')
+
+- This produces presentation_pb2.py, slide_pb2.py, etc. under src/gen/.
+
+2. Verify Access to Presentations
+---------------------------------
+PYTHONPATH=src/gen python3 - <<'PY'
+import os, sys
+sys.path.insert(0, os.path.abspath('src/gen'))
+import presentation_pb2
+p = "/Users/lukekutler/Documents/ProPresenter/Libraries/Presentations/Transition.pro"
+doc = presentation_pb2.Presentation()
+with open(p, "rb") as f: doc.ParseFromString(f.read())
+print("Current operator notes:", repr(doc.notes))
+PY
+
+→ should print the current notes (often '' if empty).
+
+3. Writer Script (scripts/pp_write_notes.py)
+--------------------------------------------
+import os, sys
+from google.protobuf.message import DecodeError
+
+if len(sys.argv) < 3:
+    print("Usage: python scripts/pp_write_notes.py /path/to/file.pro 'notes text'")
+    sys.exit(1)
+
+pro_file = os.path.expanduser(sys.argv[1])
+notes = " ".join(sys.argv[2:])
+
+# Add generated folder to sys.path
+gen_dir = os.path.join(os.path.dirname(__file__), '..', 'src', 'gen')
+sys.path.insert(0, os.path.abspath(gen_dir))
+
+import presentation_pb2  # generated
+
+doc = presentation_pb2.Presentation()
+with open(pro_file, "rb") as f:
+    try:
+        doc.ParseFromString(f.read())
+    except DecodeError:
+        print("ERROR: Could not parse .pro file (is ProPresenter closed?).")
+        sys.exit(1)
+
+print("Current operator notes:", repr(doc.notes))
+doc.notes = notes   # overwrite mode (can be changed to append)
+with open(pro_file, "wb") as f:
+    f.write(doc.SerializeToString())
+print("✅ Wrote operator notes to:", pro_file)
+print("New operator notes:", repr(notes))
+
+4. Run the Writer
+-----------------
+PYTHONPATH=src/gen python3 scripts/pp_write_notes.py "/Users/lukekutler/Documents/ProPresenter/Libraries/Presentations/Transition.pro" "Host: Megan — Pray out of worship; Dismiss LIFE Youth Jr.; Fall Fest invite; CUE: LET'S WATCH"
+
+5. Verify
+---------
+PYTHONPATH=src/gen python3 - <<'PY'
+import os, sys
+sys.path.insert(0, os.path.abspath('src/gen'))
+import presentation_pb2
+p = "/Users/lukekutler/Documents/ProPresenter/Libraries/Presentations/Transition.pro"
+doc = presentation_pb2.Presentation()
+with open(p, "rb") as f: doc.ParseFromString(f.read())
+print("Operator notes now:", repr(doc.notes))
+PY
+
+→ should show the updated string.
+
+⚠️ Notes for Dev
+----------------
+- Close ProPresenter before writing, otherwise the file may be locked or overwritten.
+- This works offline (direct .pro mutation), not through the HTTP API (which is read-only for notes).
+- For append behavior, change the line:
+  doc.notes = notes
+  to:
+  doc.notes = (doc.notes + '\n' if doc.notes else '') + notes

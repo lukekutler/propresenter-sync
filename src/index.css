@@ -1,0 +1,10 @@
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { --brand: 247 95% 51%; }
+
+.card { @apply rounded-2xl bg-neutral-900/60 border border-neutral-800 shadow-lg; }
+.btn  { @apply inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 active:bg-white/20; }
+.pill { @apply text-xs rounded-full px-2 py-1 bg-white/5 border border-white/10; }
