@@ -160,6 +160,11 @@ type TransitionTopicSpec = {
     documentsRelativePath?: string;
     formatHint?: string;
   };
+  gallery?: {
+    filePath: string;
+    documentsRelativePath?: string;
+    formatHint?: string;
+  }[];
 };
 type PropIdentifier = {
   propUuid: string;
@@ -169,6 +174,12 @@ type PropIdentifier = {
   triggerAutoClearEnabled?: boolean;
   triggerAutoClearFollowsDuration?: boolean;
   triggerAutoClearDuration?: number;
+};
+type LowerThirdPayload = {
+  name: string;
+  filePath: string;
+  documentsRelativePath?: string;
+  formatHint?: string;
 };
 
 const DEFAULT_TRANSITION_TIMER_NAME = 'Service Item Timer';
@@ -185,6 +196,54 @@ const TOPIC_MEDIA_RULES: { pattern: RegExp; targetName: string }[] = [
   { pattern: /next\s*step/i, targetName: 'Next Steps' },
 ];
 const MIN_TRANSITION_MEDIA_SCORE = 15;
+const lowerThirdDirectoryCandidates: { built: boolean; dirs: string[] } = { built: false, dirs: [] };
+type LowerThirdEntry = {
+  filePath: string;
+  documentsRelativePath?: string;
+  formatHint?: string;
+  baseName: string;
+  keys: string[];
+};
+const lowerThirdMediaIndex: { built: boolean; entries: LowerThirdEntry[]; byKey: Map<string, LowerThirdEntry[]> } = {
+  built: false,
+  entries: [],
+  byKey: new Map(),
+};
+const LOWER_THIRD_STOP_WORDS = new Set([
+  'pastor',
+  'pst',
+  'ps',
+  'rev',
+  'reverend',
+  'minister',
+  'min',
+  'dr',
+  'doctor',
+  'bishop',
+  'host',
+  'speaker',
+  'guest',
+  'mc',
+  'emcee',
+  'coach',
+  'leader',
+  'team',
+  'service',
+  'transition',
+  'closing',
+  'message',
+  'name',
+  'the',
+]);
+const PHOTO_KEYWORDS = /\b(photo|photos|picture|pictures|pic|pics|gallery|images|shots|snap|snapshots)\b/i;
+const PHOTO_KEYWORDS_GLOBAL = /\b(photo|photos|picture|pictures|pic|pics|gallery|images|shots|snap|snapshots)\b/gi;
+const photoDirectoryCandidates: { built: boolean; dirs: string[] } = { built: false, dirs: [] };
+type PhotoDirectoryEntry = {
+  name: string;
+  path: string;
+  keys: string[];
+};
+const photoDirectoryIndex: { built: boolean; entries: PhotoDirectoryEntry[] } = { built: false, entries: [] };
 
 function parseMaybeJson(text?: string) {
   if (!text) return undefined;
@@ -539,6 +598,408 @@ function resolveMediaFilePath(name: string): { filePath: string; documentsRelati
   }
   const ext = path.extname(absolute).slice(1).toUpperCase();
   return { filePath: absolute, documentsRelativePath: rel, formatHint: ext || undefined };
+}
+
+function discoverLowerThirdDirectories(): string[] {
+  if (lowerThirdDirectoryCandidates.built) return lowerThirdDirectoryCandidates.dirs;
+  const dirs = new Set<string>();
+  const envRaw = (process.env.PROSYNC_LOWER_THIRDS_DIRS || process.env.PROSYNC_LOWER_THIRDS_DIR || '').trim();
+  if (envRaw) {
+    for (const part of envRaw.split(path.delimiter)) {
+      const candidate = part.trim();
+      if (!candidate) continue;
+      try {
+        if (fs.statSync(candidate).isDirectory()) dirs.add(path.resolve(candidate));
+      } catch {}
+    }
+  }
+
+  const home = os.homedir();
+  const defaults = [
+    path.join(home, 'Documents', 'Lower Thirds'),
+    path.join(home, 'Documents', 'LowerThirds'),
+    path.join(home, 'Documents', 'Word Of Life', 'Lower Thirds'),
+    path.join(home, 'Documents', 'Word Of Life', 'LowerThirds'),
+    path.join(home, 'Documents', 'ProPresenter', 'Media', 'Lower Thirds'),
+    path.join(home, 'Documents', 'ProPresenter', 'Media', 'LowerThirds'),
+    path.join(home, 'Documents', 'ProPresenter', 'Media'),
+  ];
+  for (const candidate of defaults) {
+    try {
+      if (fs.statSync(candidate).isDirectory()) dirs.add(path.resolve(candidate));
+    } catch {}
+  }
+
+  const documentsDir = path.join(home, 'Documents');
+  try {
+    const entries = fs.readdirSync(documentsDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      if (/lower\s*third/i.test(entry.name)) {
+        const resolved = path.join(documentsDir, entry.name);
+        try {
+          if (fs.statSync(resolved).isDirectory()) dirs.add(path.resolve(resolved));
+        } catch {}
+      }
+    }
+  } catch {}
+
+  lowerThirdDirectoryCandidates.built = true;
+  lowerThirdDirectoryCandidates.dirs = Array.from(dirs);
+  if (!lowerThirdDirectoryCandidates.dirs.length) {
+    broadcastLog('[DEBUG] Lower third index: no directories discovered');
+  } else {
+    broadcastLog(`[DEBUG] Lower third index directories: ${lowerThirdDirectoryCandidates.dirs.join(', ')}`);
+  }
+  return lowerThirdDirectoryCandidates.dirs;
+}
+
+function normalizeLowerThirdBase(input: string): string {
+  return normalizeMediaKey(
+    input
+      .replace(/lower\s*thirds?/gi, ' ')
+      .replace(/lowerthirds?/gi, ' ')
+      .replace(/lt\b/gi, ' ')
+      .replace(/nameplate/gi, ' ')
+      .replace(/title/gi, ' ')
+      .replace(/overlay/gi, ' ')
+      .replace(/\s+/g, ' ')
+  );
+}
+
+function filterLowerThirdStopWords(input: string): string {
+  if (!input) return input;
+  const tokens = input.split(/\s+/).filter(Boolean);
+  const filtered = tokens.filter((token) => !LOWER_THIRD_STOP_WORDS.has(token));
+  return filtered.join(' ');
+}
+
+function normalizeLowerThirdKey(input: string): string {
+  const base = normalizeLowerThirdBase(input);
+  if (!base) return '';
+  const filtered = filterLowerThirdStopWords(base);
+  return filtered || base;
+}
+
+function collectLowerThirdKeys(baseName: string, parentName?: string): string[] {
+  const keys = new Set<string>();
+  const variants = new Set<string>();
+  variants.add(baseName);
+  if (parentName) variants.add(`${parentName} ${baseName}`);
+  if (parentName) variants.add(parentName);
+
+  for (const variant of variants) {
+    const baseNormalized = normalizeLowerThirdBase(variant);
+    if (!baseNormalized) continue;
+    keys.add(baseNormalized);
+    const filtered = filterLowerThirdStopWords(baseNormalized);
+    if (filtered) keys.add(filtered);
+
+    const tokens = baseNormalized.split(/\s+/).filter(Boolean);
+    const filteredTokens = filtered ? filtered.split(/\s+/).filter(Boolean) : tokens;
+
+    for (const token of tokens) {
+      if (token.length >= 2) keys.add(token);
+    }
+    for (const token of filteredTokens) {
+      if (token.length >= 2) keys.add(token);
+    }
+
+    if (tokens.length >= 2) {
+      keys.add(`${tokens[0]} ${tokens[tokens.length - 1]}`.trim());
+      keys.add(tokens[tokens.length - 1]);
+    }
+    if (filteredTokens.length >= 2) {
+      keys.add(`${filteredTokens[0]} ${filteredTokens[filteredTokens.length - 1]}`.trim());
+      keys.add(filteredTokens[filteredTokens.length - 1]);
+    }
+
+    const initials = tokens.map((token) => token[0]).join('');
+    if (initials.length >= 2) keys.add(initials);
+    const filteredInitials = filteredTokens.map((token) => token[0]).join('');
+    if (filteredInitials.length >= 2) keys.add(filteredInitials);
+  }
+
+  return Array.from(keys).map((key) => normalizeMediaKey(key)).filter(Boolean);
+}
+
+function topicRequestsPhotos(topic: string): boolean {
+  return PHOTO_KEYWORDS.test(topic);
+}
+
+function stripPhotoKeywords(topic: string): string {
+  return topic.replace(PHOTO_KEYWORDS_GLOBAL, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function discoverPhotoDirectories(): string[] {
+  if (photoDirectoryCandidates.built) return photoDirectoryCandidates.dirs;
+  const dirs = new Set<string>();
+  const envRaw = (process.env.PROSYNC_PHOTOS_DIRS || process.env.PROSYNC_PHOTOS_DIR || '').trim();
+  if (envRaw) {
+    for (const part of envRaw.split(path.delimiter)) {
+      const candidate = part.trim();
+      if (!candidate) continue;
+      try {
+        if (fs.statSync(candidate).isDirectory()) dirs.add(path.resolve(candidate));
+      } catch {}
+    }
+  }
+
+  const home = os.homedir();
+  const defaults = [
+    path.join(home, 'Documents', 'Word Of Life', 'Photos'),
+    path.join(home, 'Documents', 'Photos'),
+    path.join(home, 'Pictures', 'Word Of Life'),
+  ];
+  for (const candidate of defaults) {
+    try {
+      if (fs.statSync(candidate).isDirectory()) dirs.add(path.resolve(candidate));
+    } catch {}
+  }
+
+  photoDirectoryCandidates.built = true;
+  photoDirectoryCandidates.dirs = Array.from(dirs);
+  if (!photoDirectoryCandidates.dirs.length) {
+    broadcastLog('[DEBUG] Photo directories not found');
+  } else {
+    broadcastLog(`[DEBUG] Photo root directories: ${photoDirectoryCandidates.dirs.join(', ')}`);
+  }
+  return photoDirectoryCandidates.dirs;
+}
+
+function indexPhotoDirectories(): PhotoDirectoryEntry[] {
+  if (photoDirectoryIndex.built) return photoDirectoryIndex.entries;
+
+  const entries: PhotoDirectoryEntry[] = [];
+  const seen = new Set<string>();
+  const roots = discoverPhotoDirectories();
+
+  const visit = (dir: string, depth: number) => {
+    if (depth > 2) return;
+    let dirEntries: fs.Dirent[] = [];
+    try {
+      dirEntries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of dirEntries) {
+      if (!entry.isDirectory()) continue;
+      const full = path.join(dir, entry.name);
+      const canonical = path.resolve(full);
+      if (seen.has(canonical)) {
+        visit(full, depth + 1);
+        continue;
+      }
+      seen.add(canonical);
+      const parentName = path.basename(dir);
+      const keys = collectLowerThirdKeys(entry.name, parentName);
+      entries.push({ name: entry.name, path: canonical, keys });
+      visit(full, depth + 1);
+    }
+  };
+
+  for (const root of roots) visit(root, 0);
+
+  photoDirectoryIndex.entries = entries;
+  photoDirectoryIndex.built = true;
+  broadcastLog(`[DEBUG] Indexed ${entries.length} photo directories`);
+  return photoDirectoryIndex.entries;
+}
+
+function collectPhotosFromDirectory(dir: string): { filePath: string; documentsRelativePath?: string; formatHint?: string }[] {
+  const images: { filePath: string; documentsRelativePath?: string; formatHint?: string }[] = [];
+  const visit = (current: string, depth: number) => {
+    if (depth > 2) return;
+    let dirEntries: fs.Dirent[] = [];
+    try {
+      dirEntries = fs.readdirSync(current, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of dirEntries) {
+      const full = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        visit(full, depth + 1);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      if (!/\.(jpe?g|png|bmp|tiff?|webp|heic)$/i.test(entry.name)) continue;
+      const absolute = path.resolve(full);
+      const documents = path.join(os.homedir(), 'Documents') + path.sep;
+      let documentsRelativePath: string | undefined;
+      if (absolute.startsWith(documents)) {
+        documentsRelativePath = path.relative(path.join(os.homedir(), 'Documents'), absolute).split(path.sep).join('/');
+      }
+      const formatHint = path.extname(absolute).slice(1).toUpperCase() || undefined;
+      images.push({ filePath: absolute, documentsRelativePath, formatHint });
+    }
+  };
+
+  visit(dir, 0);
+  images.sort((a, b) => a.filePath.localeCompare(b.filePath));
+  return images;
+}
+
+function resolveTopicPhotos(topic: string): { filePath: string; documentsRelativePath?: string; formatHint?: string }[] | undefined {
+  if (!topicRequestsPhotos(topic)) return undefined;
+  const stripped = stripPhotoKeywords(topic);
+  const normalized = normalizeMediaKey(stripped);
+  const tokens = normalized.split(/\s+/).filter(Boolean);
+  const index = indexPhotoDirectories();
+
+  let bestEntry: PhotoDirectoryEntry | undefined;
+  let bestScore = 0;
+
+  for (const entry of index) {
+    let score = 0;
+    for (const key of entry.keys) {
+      if (!key) continue;
+      if (normalized && key === normalized) {
+        score = Math.max(score, 120);
+        break;
+      }
+      if (normalized && (key.includes(normalized) || normalized.includes(key))) {
+        score = Math.max(score, 90);
+        continue;
+      }
+      if (tokens.length) {
+        const keyTokens = key.split(/\s+/).filter(Boolean);
+        const overlap = tokens.filter((token) => keyTokens.includes(token)).length;
+        if (overlap) score = Math.max(score, overlap * 18);
+      }
+    }
+    if (score > 0 && (!bestEntry || score > bestScore)) {
+      bestEntry = entry;
+      bestScore = score;
+    }
+  }
+
+  if (!bestEntry) return undefined;
+
+  const photos = collectPhotosFromDirectory(bestEntry.path);
+  if (!photos.length) return undefined;
+
+  broadcastLog(`[INFO] Transition photos selected • ${topic} -> ${bestEntry.path} (${photos.length} images)`);
+  return photos;
+}
+
+function indexLowerThirdMedia(): { entries: LowerThirdEntry[]; byKey: Map<string, LowerThirdEntry[]> } {
+  if (lowerThirdMediaIndex.built) return lowerThirdMediaIndex;
+
+  const entries: LowerThirdEntry[] = [];
+  const byKey = new Map<string, LowerThirdEntry[]>();
+  const documentsRoot = path.join(os.homedir(), 'Documents') + path.sep;
+
+  const enqueue = (entry: LowerThirdEntry) => {
+    entries.push(entry);
+    for (const key of entry.keys) {
+      if (!key) continue;
+      const list = byKey.get(key) ?? [];
+      if (!list.includes(entry)) {
+        list.push(entry);
+        byKey.set(key, list);
+      }
+    }
+  };
+
+  const visit = (dir: string, depth: number) => {
+    if (depth > 5) return;
+    let dirEntries: fs.Dirent[] = [];
+    try {
+      dirEntries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of dirEntries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        visit(full, depth + 1);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      if (!/\.(mov|mp4|m4v)$/i.test(entry.name)) continue;
+      const abs = path.resolve(full);
+      let rel: string | undefined;
+      if (abs.startsWith(documentsRoot)) {
+        rel = path.relative(path.join(os.homedir(), 'Documents'), abs).split(path.sep).join('/');
+      }
+      const ext = path.extname(abs).slice(1).toUpperCase() || undefined;
+      const baseName = entry.name.replace(/\.[^.]+$/, '');
+      const parentName = path.basename(path.dirname(abs));
+      const keys = new Set<string>(collectLowerThirdKeys(baseName, parentName));
+      const entryPayload: LowerThirdEntry = {
+        filePath: abs,
+        documentsRelativePath: rel,
+        formatHint: ext,
+        baseName,
+        keys: Array.from(keys).filter(Boolean),
+      };
+      enqueue(entryPayload);
+    }
+  };
+
+  for (const dir of discoverLowerThirdDirectories()) visit(dir, 0);
+
+  lowerThirdMediaIndex.built = true;
+  lowerThirdMediaIndex.entries = entries;
+  lowerThirdMediaIndex.byKey = byKey;
+  broadcastLog(`[DEBUG] Indexed ${entries.length} lower third assets`);
+  return lowerThirdMediaIndex;
+}
+
+function resolveLowerThirdMedia(name: string): { filePath: string; documentsRelativePath?: string; formatHint?: string } | undefined {
+  const normalized = normalizeLowerThirdKey(name);
+  if (!normalized) return undefined;
+  const index = indexLowerThirdMedia();
+  if (!index.entries.length) {
+    broadcastLog('[DEBUG] Lower third index empty when resolving asset');
+  }
+  const direct = index.byKey.get(normalized);
+  if (direct && direct.length) {
+    const pick = direct.sort((a, b) => a.baseName.localeCompare(b.baseName))[0];
+    return { filePath: pick.filePath, documentsRelativePath: pick.documentsRelativePath, formatHint: pick.formatHint };
+  }
+
+  let best: LowerThirdEntry | undefined;
+  let bestScore = 0;
+  const tokens = normalized.split(/\s+/).filter(Boolean);
+  for (const entry of index.entries) {
+    let score = 0;
+    for (const key of entry.keys) {
+      if (!key) continue;
+      if (key === normalized) {
+        score = Math.max(score, 100);
+        break;
+      }
+      if (key.includes(normalized) || normalized.includes(key)) {
+        score = Math.max(score, 70);
+      } else if (tokens.length) {
+        const keyTokens = key.split(/\s+/).filter(Boolean);
+        const overlap = tokens.filter((token) => keyTokens.includes(token)).length;
+        if (overlap) score = Math.max(score, overlap * 15);
+      }
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      best = entry;
+    }
+  }
+
+  if (!best || bestScore < 30) {
+    broadcastLog(`[DEBUG] Lower third candidate not strong enough • query=${normalized} score=${bestScore}`);
+    return undefined;
+  }
+  return { filePath: best.filePath, documentsRelativePath: best.documentsRelativePath, formatHint: best.formatHint };
+}
+
+function extractBracketedName(title: string): string | undefined {
+  if (!title) return undefined;
+  const matches = title.matchAll(/\[([^\]]+)\]/g);
+  for (const match of matches) {
+    const candidate = (match[1] ?? '').trim();
+    if (candidate) return candidate;
+  }
+  return undefined;
 }
 
 function parsePossibleTimestamp(value: unknown): number | undefined {
@@ -977,7 +1438,7 @@ function isDevtoolsWindow(win: BrowserWindow | null): boolean {
   return false;
 }
 
-async function applyTransitionTemplate(file: string, label: string, timerSeconds?: number, timerInfo?: TimerDescriptor, stageLayout?: StageLayoutDescriptor, topics?: TransitionTopicSpec[], propInfo?: PropIdentifier): Promise<{ ok: boolean; code: number; out: string; err: string }> {
+async function applyTransitionTemplate(file: string, label: string, timerSeconds?: number, timerInfo?: TimerDescriptor, stageLayout?: StageLayoutDescriptor, topics?: TransitionTopicSpec[], propInfo?: PropIdentifier, lowerThird?: LowerThirdPayload): Promise<{ ok: boolean; code: number; out: string; err: string }> {
   const script = path.resolve(process.cwd(), 'scripts', 'pp_apply_transition_template.py');
   const args = [file, label, ''];
   const hasTimerSeconds = typeof timerSeconds === 'number' && Number.isFinite(timerSeconds) && timerSeconds > 0;
@@ -986,6 +1447,7 @@ async function applyTransitionTemplate(file: string, label: string, timerSeconds
   args.push(stageLayout ? JSON.stringify(stageLayout) : '');
   args.push(Array.isArray(topics) && topics.length ? JSON.stringify(topics) : '');
   args.push(propInfo ? JSON.stringify(propInfo) : '');
+  args.push(lowerThird ? JSON.stringify(lowerThird) : '');
   const res = await runPythonScript(script, args);
   return { ok: res.code === 0, ...res };
 }
@@ -1783,6 +2245,20 @@ ipcMain.handle('pp-run-notes-sync', async (_e, payload: { host: string; port: nu
           if (timerSeconds) {
             broadcastLog(`[DEBUG] Transition timer length ${timerSeconds}s • ${title}`);
           }
+          const lowerThirdName = extractBracketedName(title);
+          if (!lowerThirdName) {
+            broadcastLog(`[DEBUG] Transition lower third skipped (no [Name] in title) • ${title}`);
+          }
+          let lowerThirdPayload: LowerThirdPayload | undefined;
+          if (lowerThirdName) {
+            const resolvedLowerThird = resolveLowerThirdMedia(lowerThirdName);
+            if (resolvedLowerThird && resolvedLowerThird.filePath) {
+              lowerThirdPayload = { name: lowerThirdName, ...resolvedLowerThird };
+              broadcastLog(`[INFO] Transition lower third match • ${lowerThirdName} -> ${resolvedLowerThird.filePath}`);
+            } else {
+              broadcastLog(`[WARN] Transition lower third missing asset • ${lowerThirdName}`);
+            }
+          }
           const topics = extractTransitionTopics(desc);
           const topicPayload: TransitionTopicSpec[] = [];
           if (topics.length) {
@@ -1794,6 +2270,11 @@ ipcMain.handle('pp-run-notes-sync', async (_e, payload: { host: string; port: nu
                 if (!topicText) continue;
                 const topicLower = topicText.toLowerCase();
                 let match: MediaMatch | undefined;
+                const requestsPhotos = topicRequestsPhotos(topicText);
+                const galleryItems = requestsPhotos ? resolveTopicPhotos(topicText) : undefined;
+                if (requestsPhotos && (!galleryItems || !galleryItems.length)) {
+                  broadcastLog(`[WARN] Transition photos missing assets • ${topicText}`);
+                }
 
                 if (available.length) {
                   const manual = findManualMediaMatch(topicLower, available, overrideSpec.manualTarget);
@@ -1845,6 +2326,9 @@ ipcMain.handle('pp-run-notes-sync', async (_e, payload: { host: string; port: nu
                     formatHint: match.formatHint,
                   },
                 };
+                if (galleryItems && galleryItems.length) {
+                  entry.gallery = galleryItems;
+                }
                 topicPayload.push(entry);
               }
             }
@@ -1852,7 +2336,16 @@ ipcMain.handle('pp-run-notes-sync', async (_e, payload: { host: string; port: nu
           if (!topicPayload.length) {
             broadcastLog('[INFO] Transition topics produced no media slides; applying base template only.');
           }
-          const transitionRes = await applyTransitionTemplate(hit.path, 'Background & Lights', timerSeconds, transitionTimer, stageLayout, topicPayload.length ? topicPayload : undefined, clearPropInfo);
+          const transitionRes = await applyTransitionTemplate(
+            hit.path,
+            'Background & Lights',
+            timerSeconds,
+            transitionTimer,
+            stageLayout,
+            topicPayload.length ? topicPayload : undefined,
+            clearPropInfo,
+            lowerThirdPayload,
+          );
           if (!transitionRes.ok) {
             summary.writeErrors++;
             broadcastLog(`[WARN] Transition rewrite failed • ${title}: ${transitionRes.err.trim() || transitionRes.out.trim() || 'unknown error'}`);

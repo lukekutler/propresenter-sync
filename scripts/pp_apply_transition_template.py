@@ -33,6 +33,35 @@ LABEL_DEFAULT = "Background & Lights"
 AUDIENCE_LOOK_DEFAULT = "Full Screen Media"
 CLEAR_LABEL = "CLEAR"
 CLEAR_PROP_NAME = "Logo"
+LOWER_THIRD_LABEL = "LOWER THIRD"
+LOWER_THIRD_LABEL_COLOR = (0.043118, 0.0, 0.263037, 1.0)
+PHOTO_LABEL_COLOR = (0.23137255, 0.0, 0.4, 1.0)
+
+
+def _encode_varint(value: int) -> bytes:
+    if value < 0:
+        raise ValueError('Varint encoding expects non-negative values')
+    parts: list[int] = []
+    while True:
+        to_write = value & 0x7F
+        value >>= 7
+        if value:
+            parts.append(to_write | 0x80)
+        else:
+            parts.append(to_write)
+            break
+    return bytes(parts)
+
+
+def _inject_varint_field(message: Any, field_number: int, value: int) -> None:
+    try:
+        buffer = bytearray(message.SerializeToString())
+        key = (field_number << 3) | 0  # varint wire type
+        buffer.extend(_encode_varint(key))
+        buffer.extend(_encode_varint(value))
+        message.ParseFromString(bytes(buffer))
+    except Exception:
+        pass
 
 
 def new_uuid() -> str:
@@ -330,7 +359,7 @@ def add_media_file_action(cue: cue_pb2.Cue, media_info: Optional[dict[str, Any]]
 
     image_props = element.image
     drawing = image_props.drawing
-    drawing.scale_behavior = graphicsData_pb2.Media.DrawingProperties.ScaleBehavior.SCALE_BEHAVIOR_FIT
+    drawing.scale_behavior = graphicsData_pb2.Media.DrawingProperties.ScaleBehavior.SCALE_BEHAVIOR_FILL
     drawing.scale_alignment = graphicsData_pb2.Media.DrawingProperties.ScaleAlignment.SCALE_ALIGNMENT_MIDDLE_CENTER
     drawing.natural_size.width = float(width)
     drawing.natural_size.height = float(height)
@@ -357,6 +386,107 @@ def add_media_file_action(cue: cue_pb2.Cue, media_info: Optional[dict[str, Any]]
             local_url.local.path = os.path.relpath(abs_path, Path.home()).replace(os.sep, '/')
 
     media_action.audio.SetInParent()
+
+    return True
+
+
+def _is_video_file(path: str) -> bool:
+    _, ext = os.path.splitext(path.lower())
+    return ext in {'.mov', '.mp4', '.m4v', '.mpg', '.mpeg', '.avi', '.dv', '.wmv'}
+
+
+def add_lower_third_media_action(cue: cue_pb2.Cue, media_info: Optional[dict[str, Any]]) -> bool:
+    if not media_info or not isinstance(media_info, dict):
+        return False
+
+    raw_path = media_info.get('filePath') or media_info.get('path') or media_info.get('absolutePath')
+    if not isinstance(raw_path, str) or not raw_path.strip():
+        print("transition_lower_third_warning:missing_path", flush=True)
+        return False
+
+    abs_path = os.path.abspath(os.path.expanduser(raw_path.strip()))
+    if not os.path.exists(abs_path):
+        print(f"transition_lower_third_warning:missing_file:{abs_path}", flush=True)
+        return False
+
+    if not _is_video_file(abs_path):
+        # Fallback to generic attachment for non-video assets
+        return add_media_file_action(cue, media_info)
+
+    file_name = os.path.basename(abs_path)
+    action = cue.actions.add()
+    action.uuid.string = new_uuid()
+    action.name = LOWER_THIRD_LABEL
+    action.label.text = LOWER_THIRD_LABEL
+    set_color(action.label.color, *LOWER_THIRD_LABEL_COLOR)
+    action.type = action_pb2.Action.ActionType.ACTION_TYPE_MEDIA
+    action.isEnabled = True
+    action.delay_time = 0.0
+
+    media_action = action.media
+    media_action.layer_type = action_pb2.Action.MediaType.LayerType.LAYER_TYPE_FOREGROUND
+
+    element = media_action.element
+    element.uuid.string = new_uuid()
+
+    format_hint = str(media_info.get('formatHint') or '').strip().upper()
+    if not format_hint:
+        _, ext = os.path.splitext(file_name)
+        format_hint = ext.lstrip('.').upper()
+    if format_hint:
+        element.metadata.format = format_hint
+
+    absolute_uri = Path(abs_path).resolve().as_uri()
+    element.url.absolute_string = absolute_uri
+    element.url.platform = basicTypes_pb2.URL.Platform.PLATFORM_MACOS
+
+    documents_root = Path.home() / 'Documents'
+    rel_path = media_info.get('documentsRelativePath') if isinstance(media_info.get('documentsRelativePath'), str) else None
+    if rel_path:
+        rel_path = rel_path.strip().lstrip('/')
+    abs_resolved = Path(abs_path).resolve()
+    if not rel_path:
+        documents_prefix = str(documents_root) + os.sep
+        abs_str = str(abs_resolved)
+        if abs_str.startswith(documents_prefix):
+            rel_path = os.path.relpath(abs_str, documents_root).replace(os.sep, '/')
+
+    if rel_path:
+        element.url.local.root = basicTypes_pb2.URL.LocalRelativePath.Root.Value('ROOT_USER_DOCUMENTS')
+        element.url.local.path = rel_path
+    else:
+        element.url.local.root = basicTypes_pb2.URL.LocalRelativePath.Root.Value('ROOT_USER_HOME')
+        element.url.local.path = os.path.relpath(abs_path, Path.home()).replace(os.sep, '/')
+
+    width, height = _infer_media_dimensions(abs_path)
+
+    video_props = element.video
+    drawing = video_props.drawing
+    drawing.scale_behavior = graphicsData_pb2.Media.DrawingProperties.ScaleBehavior.SCALE_BEHAVIOR_FILL
+    drawing.scale_alignment = graphicsData_pb2.Media.DrawingProperties.ScaleAlignment.SCALE_ALIGNMENT_MIDDLE_CENTER
+    drawing.natural_size.width = float(width)
+    drawing.natural_size.height = float(height)
+    drawing.custom_image_bounds.origin.x = 0.0
+    drawing.custom_image_bounds.origin.y = 0.0
+    drawing.custom_image_bounds.size.width = float(width)
+    drawing.custom_image_bounds.size.height = float(height)
+    drawing.crop_enable = False
+    drawing.crop_insets.top = 0.0
+    drawing.crop_insets.bottom = 0.0
+    drawing.crop_insets.left = 0.0
+    drawing.crop_insets.right = 0.0
+
+    video_props.audio.volume = 1.0
+
+    transport = video_props.transport
+    transport.play_rate = 1.0
+    transport.should_fade_in = True
+    transport.should_fade_out = True
+    transport.playback_behavior = graphicsData_pb2.Media.TransportProperties.PlaybackBehavior.PLAYBACK_BEHAVIOR_STOP
+    transport.times_to_loop = 1
+
+    playback = video_props.video
+    playback.end_behavior = graphicsData_pb2.Media.VideoProperties.EndBehavior.END_BEHAVIOR_FADE_TO_CLEAR
 
     return True
 
@@ -434,6 +564,112 @@ def build_topic_cue(topic: str, media_info: Optional[dict[str, Any]]) -> cue_pb2
     attached_media = add_media_file_action(cue, media_info)
     if not attached_media:
         add_media_playlist_action(cue, topic, media_info)
+
+    return cue
+
+
+def build_photo_cue(topic: str, media_info: Optional[dict[str, Any]], index: int) -> Optional[cue_pb2.Cue]:
+    if not media_info or not isinstance(media_info, dict):
+        return None
+
+    label = f"{topic} Photo {index + 1}" if index >= 0 else f"{topic} Photo"
+    display_label = f"PHOTO {index + 1}" if index >= 0 else "PHOTO"
+
+    cue = cue_pb2.Cue()
+    cue.uuid.string = new_uuid()
+    cue.name = label
+    cue.isEnabled = True
+
+    slide_action = cue.actions.add()
+    slide_action.uuid.string = new_uuid()
+    slide_action.name = label
+    slide_action.type = action_pb2.Action.ActionType.ACTION_TYPE_PRESENTATION_SLIDE
+    slide_action.isEnabled = True
+    slide_action.delay_time = 0.0
+    slide_action.label.text = display_label
+    set_color(slide_action.label.color, *PHOTO_LABEL_COLOR)
+    slide_action.layer_identification.uuid.string = "slides"
+    slide_action.layer_identification.name = "Slides"
+    slide_action.slide.presentation.CopyFrom(build_transition_slide())
+
+    clear_props_action = cue.actions.add()
+    clear_props_action.uuid.string = new_uuid()
+    clear_props_action.name = "Clear Props"
+    clear_props_action.type = action_pb2.Action.ActionType.ACTION_TYPE_CLEAR
+    clear_props_action.isEnabled = True
+    clear_props_action.delay_time = 0.0
+    clear_props_action.label.text = ''
+    set_color(clear_props_action.label.color, 0.054, 0.211, 0.588, 1.0)
+    clear_props_action.clear.target_layer = action_pb2.Action.ClearType.ClearTargetLayer.CLEAR_TARGET_LAYER_PROP
+
+    attached = add_media_file_action(cue, media_info)
+    if not attached:
+        print(f"transition_photo_warning:attach_failed:{label}", flush=True)
+        return None
+
+    try:
+        media_action = cue.actions[-1]
+        if media_action.type == action_pb2.Action.ActionType.ACTION_TYPE_MEDIA:
+            set_color(media_action.label.color, 0.054, 0.211, 0.588, 1.0)
+            drawing = media_action.media.element.image.drawing
+            drawing.custom_image_aspect_locked = True
+            drawing.scale_behavior = graphicsData_pb2.Media.DrawingProperties.ScaleBehavior.SCALE_BEHAVIOR_FILL
+            _inject_varint_field(drawing, 15, 1)
+            _inject_varint_field(drawing, 16, 1)
+    except Exception:
+        pass
+
+    return cue
+
+
+def build_topic_cues(topic: str, media_info: Optional[dict[str, Any]], gallery: Optional[list[dict[str, Any]]]) -> list[cue_pb2.Cue]:
+    cues: list[cue_pb2.Cue] = []
+    cues.append(build_topic_cue(topic, media_info))
+    if gallery:
+        for idx, photo in enumerate(gallery):
+            photo_cue = build_photo_cue(topic, photo, idx)
+            if photo_cue is not None:
+                cues.append(photo_cue)
+    return cues
+
+
+def build_lower_third_cue(lower_info: Optional[dict[str, Any]]) -> Optional[cue_pb2.Cue]:
+    if not lower_info or not isinstance(lower_info, dict):
+        return None
+
+    raw_path = lower_info.get('filePath') or lower_info.get('path') or lower_info.get('absolutePath')
+    if not isinstance(raw_path, str) or not raw_path.strip():
+        print("transition_lower_third_warning:missing_path", flush=True)
+        return None
+
+    cue = cue_pb2.Cue()
+    cue.uuid.string = new_uuid()
+    cue.name = LOWER_THIRD_LABEL
+    cue.isEnabled = True
+
+    slide_action = cue.actions.add()
+    slide_action.uuid.string = new_uuid()
+    slide_action.name = LOWER_THIRD_LABEL
+    slide_action.type = action_pb2.Action.ActionType.ACTION_TYPE_PRESENTATION_SLIDE
+    slide_action.isEnabled = True
+    slide_action.delay_time = 0.0
+    slide_action.label.text = LOWER_THIRD_LABEL
+    set_color(slide_action.label.color, *LOWER_THIRD_LABEL_COLOR)
+    slide_action.layer_identification.uuid.string = "slides"
+    slide_action.layer_identification.name = "Slides"
+    slide_action.slide.presentation.CopyFrom(build_transition_slide())
+
+    attached = add_lower_third_media_action(cue, lower_info)
+    if not attached:
+        print(f"transition_lower_third_warning:attach_failed:{raw_path}", flush=True)
+        return None
+
+    name_text = str(lower_info.get('name') or '').strip()
+    try:
+        payload = {'name': name_text, 'path': os.path.abspath(os.path.expanduser(raw_path.strip()))}
+        print(f"transition_lower_third:{json.dumps(payload)}", flush=True)
+    except Exception:
+        print(f"transition_lower_third:{name_text}", flush=True)
 
     return cue
 
@@ -525,7 +761,7 @@ def _infer_media_dimensions(path: str) -> Tuple[float, float]:
         return 1920.0, 1080.0
     return width, height
 
-def rebuild_transition_presentation(path: str, label: str, audience_look_name: str, timer_seconds: int, timer_info: Optional[dict[str, Any]], stage_layout_info: Optional[dict[str, Any]], topic_specs: Optional[list[dict[str, Any]]], prop_info: Optional[dict[str, Any]]) -> None:
+def rebuild_transition_presentation(path: str, label: str, audience_look_name: str, timer_seconds: Optional[float], timer_info: Optional[dict[str, Any]], stage_layout_info: Optional[dict[str, Any]], topic_specs: Optional[list[dict[str, Any]]], prop_info: Optional[dict[str, Any]], lower_third_info: Optional[dict[str, Any]]) -> None:
     print(f"DEBUG: rebuild_transition called with prop_info={prop_info}", flush=True)
     package_root, target_file = locate_protobuf_payload(path)
 
@@ -588,7 +824,13 @@ def rebuild_transition_presentation(path: str, label: str, audience_look_name: s
             prop_action.prop.identification.parameter_uuid.string = prop_info['propUuid']
         prop_action.prop.identification.parameter_name = CLEAR_PROP_NAME
 
-    topic_entries: list[tuple[str, Optional[dict[str, Any]]]] = []
+    lower_third_cue = build_lower_third_cue(lower_third_info)
+    if lower_third_info and lower_third_cue is None:
+        print("transition_lower_third_warning:cue_not_created", flush=True)
+    if not lower_third_info:
+        print("transition_lower_third:skip:no_payload", flush=True)
+
+    topic_entries: list[dict[str, Any]] = []
     if topic_specs:
         for entry in topic_specs:
             if not isinstance(entry, dict):
@@ -597,20 +839,58 @@ def rebuild_transition_presentation(path: str, label: str, audience_look_name: s
             if not topic_text:
                 continue
             media_info = entry.get('media') if isinstance(entry.get('media'), dict) else None
-            topic_entries.append((topic_text, media_info))
+            gallery_payload: list[dict[str, Any]] = []
+            raw_gallery = entry.get('gallery')
+            if isinstance(raw_gallery, list):
+                for photo in raw_gallery:
+                    if not isinstance(photo, dict):
+                        continue
+                    raw_path = photo.get('filePath') or photo.get('path') or photo.get('absolutePath')
+                    if not isinstance(raw_path, str) or not raw_path.strip():
+                        continue
+                    candidate: dict[str, Any] = {'filePath': os.path.abspath(os.path.expanduser(raw_path.strip()))}
+                    for key in ('documentsRelativePath', 'documents_relative_path'):
+                        if isinstance(photo.get(key), str):
+                            candidate['documentsRelativePath'] = photo[key]
+                            break
+                    if isinstance(photo.get('formatHint'), str):
+                        candidate['formatHint'] = photo['formatHint']
+                    gallery_payload.append(candidate)
+            topic_entries.append({'topic': topic_text, 'media': media_info, 'gallery': gallery_payload})
 
     if topic_entries:
         try:
-            summary = [{'topic': topic, 'hasMedia': bool(media)} for topic, media in topic_entries]
+            summary = [
+                {
+                    'topic': detail.get('topic'),
+                    'hasMedia': bool(detail.get('media')),
+                    'photoCount': len(detail.get('gallery') or []),
+                }
+                for detail in topic_entries
+            ]
             print(f"transition_topics:{json.dumps(summary)}", flush=True)
         except Exception:
             print(f"transition_topics_count:{len(topic_entries)}", flush=True)
 
     cues_to_write: list[cue_pb2.Cue] = [base_cue]
-    for idx, (topic_text, media_payload) in enumerate(topic_entries):
-        cues_to_write.append(build_topic_cue(topic_text, media_payload))
-        # Add CLEAR cue between topics and after the last topic
-        if idx < len(topic_entries) - 1 or topic_entries:  # Add clear if there are any topics
+    if lower_third_cue is not None:
+        cues_to_write.append(lower_third_cue)
+    for idx, detail in enumerate(topic_entries):
+        topic_text = str(detail.get('topic') or '').strip()
+        media_payload = detail.get('media') if isinstance(detail.get('media'), dict) else None
+        gallery_payload = detail.get('gallery') if isinstance(detail.get('gallery'), list) else None
+        topic_cues = build_topic_cues(topic_text, media_payload, gallery_payload)
+        for cue in topic_cues:
+            cues_to_write.append(cue)
+        if gallery_payload:
+            try:
+                print(
+                    f"transition_topic_photos:{json.dumps({'topic': topic_text, 'count': len(gallery_payload)})}",
+                    flush=True,
+                )
+            except Exception:
+                print(f"transition_topic_photos:{topic_text}:{len(gallery_payload)}", flush=True)
+        if idx < len(topic_entries) - 1 or topic_entries:
             cues_to_write.append(build_clear_cue(prop_info))
 
     doc.cues.clear()
@@ -726,8 +1006,22 @@ def main(argv: list[str]) -> int:
             except json.JSONDecodeError as e:
                 print(f"DEBUG: Failed to parse prop info: {str(e)}", flush=True)
                 prop_info = None
+    lower_third_info: Optional[dict[str, Any]] = None
+    if len(argv) > 9:
+        raw_lower = argv[9].strip()
+        if raw_lower:
+            try:
+                parsed_lower = json.loads(raw_lower)
+                if isinstance(parsed_lower, dict):
+                    lower_third_info = parsed_lower
+                    print(f"DEBUG: Parsed lower third info: {parsed_lower}", flush=True)
+            except json.JSONDecodeError:
+                lower_third_info = None
+                print(f"DEBUG: Failed to parse lower third payload: {raw_lower}", flush=True)
+    else:
+        print("DEBUG: No lower third payload argument provided", flush=True)
     try:
-        rebuild_transition_presentation(path, label, look_name, timer_seconds, timer_info, stage_layout_info, topic_specs, prop_info)
+        rebuild_transition_presentation(path, label, look_name, timer_seconds, timer_info, stage_layout_info, topic_specs, prop_info, lower_third_info)
     except Exception as exc:  # pragma: no cover - debugging aid
         print(f"error:{exc}", file=sys.stderr)
         return 2

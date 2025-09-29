@@ -22,25 +22,18 @@ _runtime_version.ValidateProtobufRuntimeVersion(
 _sym_db = _symbol_database.Default()
 
 
-import applicationInfo_pb2 as applicationInfo__pb2
+import basicTypes_pb2 as basicTypes__pb2
 import cue_pb2 as cue__pb2
-import customOptions_pb2 as customOptions__pb2
 import effects_pb2 as effects__pb2
-import uuid_pb2 as uuid__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x12propDocument.proto\x12\x07rv.data\x1a\x15\x61pplicationInfo.proto\x1a\tcue.proto\x1a\x13\x63ustomOptions.proto\x1a\reffects.proto\x1a\nuuid.proto\"\xb4\x03\n\x0cPropDocument\x12\x32\n\x10\x61pplication_info\x18\x01 \x01(\x0b\x32\x18.rv.data.ApplicationInfo\x12\x1a\n\x04\x63ues\x18\x02 \x03(\x0b\x32\x0c.rv.data.Cue\x12\'\n\ntransition\x18\x03 \x01(\x0b\x32\x13.rv.data.Transition\x12>\n\x10prop_collections\x18\x04 \x03(\x0b\x32$.rv.data.PropDocument.PropCollection\x1a\xea\x01\n\x0ePropCollection\x12\x1b\n\x04uuid\x18\x01 \x01(\x0b\x32\r.rv.data.UUID\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x38\n\x05items\x18\x03 \x03(\x0b\x32).rv.data.PropDocument.PropCollection.Item\x12\x1b\n\x13single_prop_enabled\x18\x04 \x01(\x08\x12\x1a\n\x04\x63ues\x18\x05 \x03(\x0b\x32\x0c.rv.data.Cue\x1a:\n\x04Item\x12&\n\rprop_cue_uuid\x18\x01 \x01(\x0b\x32\r.rv.data.UUIDH\x00\x42\n\n\x08ItemTypeB4\xf8\x01\x01\xaa\x02$Pro.SerializationInterop.RVProtoData\xba\x02\x07RVData_b\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x12propDocument.proto\x12\x07rv.data\x1a\x10\x62\x61sicTypes.proto\x1a\tcue.proto\x1a\reffects.proto\"\x87\x01\n\x0cPropDocument\x12\x32\n\x10\x61pplication_info\x18\x01 \x01(\x0b\x32\x18.rv.data.ApplicationInfo\x12\x1a\n\x04\x63ues\x18\x02 \x03(\x0b\x32\x0c.rv.data.Cue\x12\'\n\ntransition\x18\x03 \x01(\x0b\x32\x13.rv.data.Transitionb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'propDocument_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
-  _globals['DESCRIPTOR']._loaded_options = None
-  _globals['DESCRIPTOR']._serialized_options = b'\370\001\001\252\002$Pro.SerializationInterop.RVProtoData\272\002\007RVData_'
-  _globals['_PROPDOCUMENT']._serialized_start=114
-  _globals['_PROPDOCUMENT']._serialized_end=550
-  _globals['_PROPDOCUMENT_PROPCOLLECTION']._serialized_start=316
-  _globals['_PROPDOCUMENT_PROPCOLLECTION']._serialized_end=550
-  _globals['_PROPDOCUMENT_PROPCOLLECTION_ITEM']._serialized_start=492
-  _globals['_PROPDOCUMENT_PROPCOLLECTION_ITEM']._serialized_end=550
+  DESCRIPTOR._loaded_options = None
+  _globals['_PROPDOCUMENT']._serialized_start=76
+  _globals['_PROPDOCUMENT']._serialized_end=211
 # @@protoc_insertion_point(module_scope)
