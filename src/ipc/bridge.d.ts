@@ -23,7 +23,7 @@ type PpMatchResult = {
   error?: string;
 };
 
-type NotesSyncSummary = {
+type PresentationSyncSummary = {
   updated: number;
   skipped: number;
   noDesc: number;
@@ -52,7 +52,7 @@ type ProSyncApi = {
   ppIndexPresentations: (payload: { root: string }) => Promise<{ ok: boolean; count: number; map: Record<string, { path: string; title?: string }> }>;
   ppIndexPresentationsUuid: (payload: { root: string }) => Promise<{ ok: boolean; count?: number; map?: Record<string, { path: string; title?: string }>; code?: number; err?: string; out?: string; error?: string }>;
   ppWriteOperatorNotesFile: (payload: { file: string; notes: string }) => Promise<{ ok: boolean; code: number; out: string; err: string }>;
-  ppRunNotesSync: (payload: { host: string; port: number; libraryRoot: string; reopen?: boolean }) => Promise<{ ok: boolean; error?: string; summary?: NotesSyncSummary; planTitle?: string; details?: string; categories?: Record<string, string> }>;
+  ppRunPresentationSync: (payload: { host: string; port: number; libraryRoot: string; reopen?: boolean; categories?: string[]; itemIds?: string[] }) => Promise<{ ok: boolean; error?: string; summary?: PresentationSyncSummary; planTitle?: string; details?: string; categories?: Record<string, string> }>;
   ppIsRunning: () => Promise<{ ok: boolean; running: boolean; error?: string }>;
   appBootComplete: () => Promise<{ ok: boolean }>;
 };

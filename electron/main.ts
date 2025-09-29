@@ -83,6 +83,29 @@ function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+function resolvePlanItemCategory(item: any): string | undefined {
+  const raw = typeof item?.category === 'string' ? item.category.trim() : '';
+  if (raw) return raw;
+  const title = String(item?.title || '').trim();
+  if (!title) return undefined;
+  const normalized = title.toLowerCase();
+  const isHeader = Boolean(item?.isHeader);
+  const contains = (...patterns: RegExp[]) => patterns.some((rx) => rx.test(normalized));
+  const containsAll = (...words: string[]) => words.every((w) => normalized.includes(w));
+
+  if (isHeader && /pre[-\s]?service/.test(normalized)) return 'Pre Service';
+  if (isHeader && /post[-\s]?service/.test(normalized)) return 'Post Service';
+  if (contains(/pre[-\s]?service/, /prelude/, /countdown/, /walk[-\s]?in/, /lobby/, /pre[-\s]?show/, /pre\s*service\s*loop/)) return 'Pre Service';
+  if (contains(/post[-\s]?service/, /dismissal/, /outro/, /walk[-\s]?out/)) return 'Post Service';
+  if (contains(/video/, /bumper/, /package/, /segment/)) return 'Videos';
+  if (contains(/message/, /sermon/, /teaching/, /communion/, /baptism/)) return 'Message';
+  if (contains(/song/, /worship/, /music/, /hymn/, /setlist/)) return 'Song';
+  if (containsAll('transition', 'host')) return 'Transitions';
+  if (contains(/transition/, /mc/, /hosting/, /welcome/, /greeting/, /announcements/, /giving/)) return 'Transitions';
+  if (isHeader) return undefined;
+  return item?.kind === 'announcement' ? 'Transitions' : 'Message';
+}
+
 function resolveDefaultProPresenterEndpoint(): { host: string; port: number } {
   const envHost = (process.env.PROSYNC_PP_HOST || process.env.PP_HOST || '').trim();
   const host = envHost.length ? envHost : '127.0.0.1';
@@ -2105,19 +2128,38 @@ ipcMain.handle('pp-index-presentations-uuid', async (_e, payload: { root: string
   return await indexPresentationsUuid(root);
 });
 
-ipcMain.handle('pp-run-notes-sync', async (_e, payload: { host: string; port: number; libraryRoot: string; reopen?: boolean }) => {
-  const { host, port, libraryRoot, reopen = true } = payload || {} as any;
+type PresentationSyncPayload = { host: string; port: number; libraryRoot: string; reopen?: boolean; categories?: string[]; itemIds?: string[] };
+
+async function runPresentationSync(payload: PresentationSyncPayload) {
+  const { host, port, libraryRoot, reopen = true, categories, itemIds } = payload || {} as any;
   if (!host || !port) return { ok: false, error: 'Missing host/port' };
   if (!libraryRoot) return { ok: false, error: 'Missing library path' };
 
-  broadcastLog('[INFO] Operator notes sync started…');
+  const requestedCategories = Array.isArray(categories)
+    ? categories.map((cat) => String(cat || '').trim()).filter((cat) => cat.length > 0)
+    : [];
+  const categoryFilter = requestedCategories.length
+    ? new Set(requestedCategories.map((cat) => cat.toLowerCase()))
+    : null;
+  const requestedIds = Array.isArray(itemIds)
+    ? itemIds.map((id) => String(id || '').trim()).filter((id) => id.length > 0)
+    : [];
+  const idFilter = requestedIds.length ? new Set(requestedIds) : null;
+
+  broadcastLog('[INFO] Presentation sync started…');
   broadcastLog(`[DEBUG] Payload • host=${host}, port=${port}, libraryRoot=${libraryRoot}, reopen=${reopen}`);
+  if (categoryFilter) {
+    broadcastLog(`[DEBUG] Category filter active: ${requestedCategories.join(', ')}`);
+  }
+  if (idFilter) {
+    broadcastLog(`[DEBUG] Item ID filter active: ${requestedIds.join(', ')}`);
+  }
   try {
     broadcastLog('[INFO] Fetching next plan from Planning Center…');
     const next = await pcoGetNextPlan();
     if (!next.ok || !next.plan) {
       const err = next.error || 'Failed to fetch plan';
-      broadcastLog(`[ERROR] Notes sync aborted: ${err}`);
+      broadcastLog(`[ERROR] Presentation sync aborted: ${err}`);
       return { ok: false, error: err };
     }
     const plan = next.plan;
@@ -2164,7 +2206,7 @@ ipcMain.handle('pp-run-notes-sync', async (_e, payload: { host: string; port: nu
     const indexRes = await indexPresentationsUuid(libraryRoot);
     if (!indexRes.ok || !indexRes.map) {
       const detail = indexRes.err || indexRes.error || 'index failed';
-      broadcastLog(`[ERROR] Notes sync aborted: library index failed (${detail.trim?.() || detail})`);
+      broadcastLog(`[ERROR] Presentation sync aborted: library index failed (${detail.trim?.() || detail})`);
       return { ok: false, error: 'Library index failed', details: detail };
     }
     broadcastLog(`[INFO] Indexed ${indexRes.count ?? 0} presentations`);
@@ -2200,14 +2242,14 @@ ipcMain.handle('pp-run-notes-sync', async (_e, payload: { host: string; port: nu
       const quitRes = await quitProPresenter();
       if (!quitRes.ok) {
         const msg = quitRes.message || 'Failed to close ProPresenter';
-        broadcastLog(`[ERROR] Notes sync aborted: ${msg}`);
+        broadcastLog(`[ERROR] Presentation sync aborted: ${msg}`);
         return { ok: false, error: msg };
       }
     }
 
     broadcastLog('[DEBUG] Plan items and categories:');
     for (const item of items) {
-      const cat = (item as any)?.category;
+      const cat = resolvePlanItemCategory(item);
       broadcastLog(`[DEBUG] • ${(item.title || '').trim()} => ${cat ?? 'none'}`);
     }
 
@@ -2215,9 +2257,15 @@ ipcMain.handle('pp-run-notes-sync', async (_e, payload: { host: string; port: nu
       for (const item of items) {
         if (item?.isHeader) continue;
         const title = String(item?.title || '').trim();
+        const itemId = String(item?.id || '').trim();
+        if (idFilter && !idFilter.has(itemId)) continue;
         const notesOverride = typeof (item as any)?.notes === 'string' ? String((item as any).notes).trim() : '';
         const descOverride = typeof (item as any)?.description === 'string' ? String((item as any).description).trim() : '';
         if (!title) { summary.skipped++; continue; }
+        const categoryLabel = resolvePlanItemCategory(item);
+        if (categoryFilter && (!categoryLabel || !categoryFilter.has(categoryLabel.toLowerCase()))) {
+          continue;
+        }
         const match = matches?.matches?.[title];
         const uuidRaw = typeof match?.uuid === 'string' ? match.uuid : undefined;
         const desc = descOverride || notesOverride;
@@ -2234,7 +2282,6 @@ ipcMain.handle('pp-run-notes-sync', async (_e, payload: { host: string; port: nu
           broadcastLog(`[DEBUG] Transition skip (no file) • ${title}`);
           continue;
         }
-        const categoryLabel = (item as any)?.category as string | undefined;
         if (!categoryLabel) {
           broadcastLog(`[DEBUG] No category computed • ${title}`);
         }
@@ -2386,14 +2433,17 @@ ipcMain.handle('pp-run-notes-sync', async (_e, payload: { host: string; port: nu
       }
     }
 
-    broadcastLog(`[INFO] Notes sync complete: updated ${summary.updated}, missing path ${summary.missingPath}, no description ${summary.noDesc}, write errors ${summary.writeErrors}.`);
+    broadcastLog(`[INFO] Presentation sync complete: updated ${summary.updated}, missing path ${summary.missingPath}, no description ${summary.noDesc}, write errors ${summary.writeErrors}.`);
     const detailPayload: Record<string, unknown> = {};
     if (missingInfo.length) detailPayload.missing = missingInfo;
     if (reopenOutcome && !reopenOutcome.ok) detailPayload.reopen = reopenOutcome.message;
     const details = Object.keys(detailPayload).length ? JSON.stringify(detailPayload) : undefined;
     return { ok: true, planTitle: plan.title, summary, details, categories: categoriesByUuid };
   } catch (e: any) {
-    broadcastLog(`[ERROR] Notes sync crashed: ${e?.message || e}`);
+    broadcastLog(`[ERROR] Presentation sync crashed: ${e?.message || e}`);
     return { ok: false, error: e?.message || 'Unexpected error' };
   }
-});
+}
+
+ipcMain.handle('pp-run-presentation-sync', async (_e, payload: PresentationSyncPayload) => runPresentationSync(payload));
+ipcMain.handle('pp-run-notes-sync', async (_e, payload: PresentationSyncPayload) => runPresentationSync(payload));
