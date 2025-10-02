@@ -204,6 +204,20 @@ type LowerThirdPayload = {
   documentsRelativePath?: string;
   formatHint?: string;
 };
+type SongTemplateSectionPayload = {
+  id?: string;
+  name?: string;
+  sequenceLabel?: string;
+  slides: string[][];
+};
+type SongTemplatePayload = {
+  title?: string;
+  groupName?: string;
+  arrangementName?: string;
+  fontFace?: string;
+  fontSize?: number;
+  sections: SongTemplateSectionPayload[];
+};
 
 const DEFAULT_TRANSITION_TIMER_NAME = 'Service Item Timer';
 const TRANSITION_TOPIC_STOP_WORDS = new Set(['the', 'and', 'for', 'with', 'from', 'into', 'after', 'next', 'step', 'story', 'jr', 'jr.', 'grades', 'grade', 'service', 'news']);
@@ -1475,6 +1489,12 @@ async function applyTransitionTemplate(file: string, label: string, timerSeconds
   return { ok: res.code === 0, ...res };
 }
 
+async function applySongTemplate(file: string, payload: SongTemplatePayload): Promise<{ ok: boolean; code: number; out: string; err: string }> {
+  const script = path.resolve(process.cwd(), 'scripts', 'pp_apply_song_template.py');
+  const res = await runPythonScript(script, [file, JSON.stringify(payload)]);
+  return { ok: res.code === 0, ...res };
+}
+
 async function fetchTimers(host: string, port: number): Promise<TimerDescriptor[]> {
   try {
     const res = await fetchJson(host, port, '/v1/timers');
@@ -2285,7 +2305,61 @@ async function runPresentationSync(payload: PresentationSyncPayload) {
         if (!categoryLabel) {
           broadcastLog(`[DEBUG] No category computed • ${title}`);
         }
-        if (categoryLabel === 'Transitions') {
+        if (categoryLabel === 'Song') {
+          const songDetails = (item as any)?.songDetails;
+          const rawSections: any[] = Array.isArray(songDetails?.sections) ? songDetails.sections : [];
+          const sectionsPayload: SongTemplateSectionPayload[] = rawSections
+            .map((section) => {
+              const rawSlides: any[] = Array.isArray(section?.lyricSlides) ? section.lyricSlides : [];
+              const slides = rawSlides
+                .map((slide) => Array.isArray(slide) ? slide.map((line) => String(line ?? '').trim()).filter((line) => line.length) : [])
+                .filter((slide) => slide.length > 0);
+              if (!slides.length) return null;
+              return {
+                id: typeof section?.id === 'string' ? section.id : undefined,
+                name: typeof section?.name === 'string' ? section.name : undefined,
+                sequenceLabel: typeof section?.sequenceLabel === 'string' ? section.sequenceLabel : undefined,
+                slides,
+              } satisfies SongTemplateSectionPayload;
+            })
+            .filter((section): section is SongTemplateSectionPayload => Boolean(section));
+
+          if (!sectionsPayload.length) {
+            broadcastLog(`[DEBUG] Song rewrite skipped (no lyric slides) • ${title}`);
+          } else {
+            broadcastLog(`[INFO] Song rewrite start • ${title} -> ${hit.path}`);
+            const songPayload: SongTemplatePayload = {
+              title,
+              groupName: typeof songDetails?.groupName === 'string' ? songDetails.groupName : 'Lyrics',
+              arrangementName: typeof songDetails?.arrangementName === 'string' ? songDetails.arrangementName : 'Default',
+              sections: sectionsPayload,
+            };
+            try {
+              const songRes = await applySongTemplate(hit.path, songPayload);
+              if (!songRes.ok) {
+                summary.writeErrors++;
+                broadcastLog(`[WARN] Song rewrite failed • ${title}: ${songRes.err.trim() || songRes.out.trim() || 'unknown error'}`);
+              } else {
+                const trimmedOut = songRes.out.trim();
+                if (trimmedOut) {
+                  for (const line of trimmedOut.split(/\r?\n/)) {
+                    broadcastLog(`[DEBUG] SONG:${line}`);
+                  }
+                }
+                const trimmedErr = songRes.err.trim();
+                if (trimmedErr) {
+                  for (const line of trimmedErr.split(/\r?\n/)) {
+                    broadcastLog(`[DEBUG] SONGERR:${line}`);
+                  }
+                }
+                broadcastLog(`[INFO] Song rewrite done • ${title}`);
+              }
+            } catch (err: any) {
+              summary.writeErrors++;
+              broadcastLog(`[WARN] Song rewrite crashed • ${title}: ${err?.message || err}`);
+            }
+          }
+        } else if (categoryLabel === 'Transitions') {
           broadcastLog(`[INFO] Transition rewrite start • ${title} -> ${hit.path}`);
           const rawLength = Number((item as any)?.lengthSeconds);
           const timerSeconds = Number.isFinite(rawLength) && rawLength > 0 ? rawLength : undefined;

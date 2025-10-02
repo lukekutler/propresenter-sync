@@ -1,3 +1,28 @@
+type SundayPrepSongSection = {
+  id: string;
+  name: string;
+  sequenceLabel?: string;
+  lyrics?: string;
+  lyricLines?: string[];
+  lyricSlides?: string[][];
+};
+
+type SundayPrepSongSequenceEntry = {
+  id: string;
+  position?: number;
+  label?: string;
+  sectionId?: string;
+};
+
+type SundayPrepPlanItemSongDetails = {
+  songId: string;
+  arrangementId?: string;
+  arrangementName?: string;
+  sequenceSummary?: string;
+  sections?: SundayPrepSongSection[];
+  sequence?: SundayPrepSongSequenceEntry[];
+};
+
 type SundayPrepPlanItem = {
   id: string;
   kind: 'song' | 'video' | 'announcement';
@@ -8,6 +33,7 @@ type SundayPrepPlanItem = {
   description?: string;
   notes?: string;
   category?: 'Song' | 'Message' | 'Transitions' | 'Videos' | 'Pre Service' | 'Post Service';
+  songDetails?: SundayPrepPlanItemSongDetails;
 };
 
 type SundayPrepPlan = {

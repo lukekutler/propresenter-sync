@@ -1,5 +1,30 @@
 
 // Planning Center connector — calls Electron main via IPC to avoid exposing secrets in renderer
+export type PlanSongSection = {
+  id: string;
+  name: string;
+  sequenceLabel?: string;
+  lyrics?: string;
+  lyricLines?: string[];
+  lyricSlides?: string[][];
+};
+
+export type PlanSongSequenceEntry = {
+  id: string;
+  position?: number;
+  label?: string;
+  sectionId?: string;
+};
+
+export type PlanItemSongDetails = {
+  songId: string;
+  arrangementId?: string;
+  arrangementName?: string;
+  sequenceSummary?: string;
+  sections?: PlanSongSection[];
+  sequence?: PlanSongSequenceEntry[];
+};
+
 export type PlanItem = {
   id: string;
   kind: 'song'|'video'|'announcement';
@@ -10,6 +35,7 @@ export type PlanItem = {
   description?: string;
   notes?: string;
   category?: 'Song' | 'Message' | 'Transitions' | 'Videos' | 'Pre Service' | 'Post Service';
+  songDetails?: PlanItemSongDetails;
 };
 export type Plan = { id: string; date: string; title: string; items: PlanItem[] };
 

@@ -5,6 +5,31 @@ import path from 'node:path';
 
 export type PCOCredentials = { appId: string; secret: string };
 export type PCOTestResult = { ok: boolean; statusCode?: number; error?: string; bodyText?: string };
+export type PCOSongArrangementSection = {
+  id: string;
+  name: string;
+  sequenceLabel?: string;
+  lyrics?: string;
+  lyricLines?: string[];
+  lyricSlides?: string[][];
+};
+
+export type PCOSongArrangementSequenceEntry = {
+  id: string;
+  position?: number;
+  label?: string;
+  sectionId?: string;
+};
+
+export type PCOPlanItemSongDetails = {
+  songId: string;
+  arrangementId?: string;
+  arrangementName?: string;
+  sequenceSummary?: string;
+  sections?: PCOSongArrangementSection[];
+  sequence?: PCOSongArrangementSequenceEntry[];
+};
+
 export type PCOPlanItem = {
   id: string;
   kind: 'song' | 'video' | 'announcement';
@@ -14,11 +39,15 @@ export type PCOPlanItem = {
   notes?: string;
   category?: 'Song' | 'Message' | 'Transitions' | 'Videos' | 'Pre Service' | 'Post Service';
   isHeader?: boolean;
+  lengthSeconds?: number;
+  songDetails?: PCOPlanItemSongDetails;
 };
 export type PCOPlan = { id: string; date: string; title: string; items: PCOPlanItem[] };
 
 const SERVICE = 'prosync-pco';
 const ACCOUNT = 'default';
+const MAX_LYRIC_LINE_LENGTH = 48;
+const PUNCT_REMOVE_REGEX = /[\p{P}\p{S}]/gu;
 
 export async function saveCredentials(creds: PCOCredentials) {
   const payload = JSON.stringify(creds);
@@ -142,6 +171,199 @@ function normalizeWhitespace(input: string): string {
   return filtered.join('\n').trim();
 }
 
+function normalizeLyricBlock(input: string): string {
+  const normalized = input
+    .replace(/\r\n?/g, '\n')
+    .replace(/\u00a0/g, ' ');
+  const rawLines = normalized.split('\n');
+  if (!rawLines.length) return '';
+
+  const trimmed = rawLines.map((line) => line.replace(/\s+$/g, '').replace(/^\s+/g, ''));
+
+  let start = 0;
+  while (start < trimmed.length && !trimmed[start].trim()) start += 1;
+  let end = trimmed.length - 1;
+  while (end >= start && !trimmed[end].trim()) end -= 1;
+  if (start > end) return '';
+
+  const slice = trimmed.slice(start, end + 1);
+  const expanded: string[] = [];
+  for (const line of slice) {
+    const trimmedLine = line.trim();
+    if (!trimmedLine) {
+      continue;
+    }
+    const sanitized = sanitizeLyric(line);
+    if (!sanitized) {
+      continue;
+    }
+    const segments = splitLyricLine(sanitized);
+    for (const segment of segments) {
+      expanded.push(segment);
+    }
+  }
+  return expanded.join('\n');
+}
+
+function splitLyricLine(line: string, maxLength = MAX_LYRIC_LINE_LENGTH): string[] {
+  const segments: string[] = [];
+  let remaining = line.trim();
+  while (remaining.length > maxLength) {
+    let breakIdx = remaining.lastIndexOf(' ', maxLength);
+    if (breakIdx <= 0) {
+      breakIdx = remaining.indexOf(' ', maxLength);
+    }
+    if (breakIdx <= 0) {
+      break;
+    }
+    const head = remaining.slice(0, breakIdx).trim();
+    if (head) segments.push(head);
+    remaining = remaining.slice(breakIdx).trim();
+  }
+  if (remaining.length) segments.push(remaining);
+  return segments.length ? segments : [line.trim()];
+}
+
+function sanitizeLyric(value: string): string {
+  return value
+    .replace(PUNCT_REMOVE_REGEX, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function buildLyricSlides(lines: string[]): { lines: string[]; slides: string[][] } {
+  const expanded: string[] = [];
+  const slides: string[][] = [];
+  let current: string[] = [];
+
+  const flush = () => {
+    if (current.length) {
+      slides.push(current);
+      current = [];
+    }
+  };
+
+  for (const raw of lines) {
+    const trimmed = raw.trim();
+    if (!trimmed.length) {
+      flush();
+      continue;
+    }
+    const parts = splitLyricLine(trimmed);
+    for (const part of parts) {
+      const segment = part.trim();
+      if (!segment.length) continue;
+      expanded.push(segment);
+      if (current.length === 2) flush();
+      current.push(segment);
+      if (current.length === 2) flush();
+    }
+  }
+
+  flush();
+  return { lines: expanded, slides };
+}
+
+function enrichSectionLyrics(section: PCOSongArrangementSection): void {
+  if (!section.lyrics) {
+    section.lyricLines = undefined;
+    section.lyricSlides = undefined;
+    return;
+  }
+  const baseLines = section.lyrics
+    .split('\n')
+    .map((line) => line.replace(/\s+$/g, '').replace(/^\s+/g, ''));
+  const { lines, slides } = buildLyricSlides(baseLines);
+  section.lyricLines = lines.length ? lines : undefined;
+  section.lyricSlides = slides.length ? slides : undefined;
+}
+
+function extractRelationshipId(node: any, key: string): string | undefined {
+  const rel = node?.relationships?.[key]?.data;
+  if (!rel) return undefined;
+  if (Array.isArray(rel)) {
+    const first = rel[0];
+    if (first && first.id !== undefined && first.id !== null) {
+      const id = String(first.id).trim();
+      if (id) return id;
+    }
+    return undefined;
+  }
+  if (rel.id !== undefined && rel.id !== null) {
+    const id = String(rel.id).trim();
+    if (id) return id;
+  }
+  return undefined;
+}
+
+function coerceSequenceArray(payload: unknown): PCOSongArrangementSequenceEntry[] | undefined {
+  if (!Array.isArray(payload)) return undefined;
+  const entries: PCOSongArrangementSequenceEntry[] = [];
+  payload.forEach((value, idx) => {
+    if (typeof value === 'string' && value.trim()) {
+      entries.push({ id: `seq-${idx}`, position: idx + 1, label: value.trim() });
+      return;
+    }
+    if (value && typeof value === 'object') {
+      const node = value as Record<string, unknown>;
+      const rawId = node.id ?? `seq-${idx}`;
+      const id = String(rawId ?? `seq-${idx}`).trim() || `seq-${idx}`;
+      const labelRaw = typeof node.label === 'string' ? node.label : (typeof node.name === 'string' ? node.name : undefined);
+      const sectionRefRaw = node.section_id ?? node.sectionId ?? (node.section && typeof (node.section as any).id !== 'undefined' ? (node.section as any).id : undefined);
+      const sectionRef = sectionRefRaw !== undefined && sectionRefRaw !== null ? String(sectionRefRaw).trim() : undefined;
+      const positionRaw = node.position ?? node.index ?? node.sequence_position;
+      const position = typeof positionRaw === 'number' ? positionRaw : Number.parseInt(String(positionRaw ?? ''), 10);
+      const entry: PCOSongArrangementSequenceEntry = { id };
+      if (Number.isFinite(position)) entry.position = Number(position);
+      if (labelRaw && labelRaw.trim()) entry.label = labelRaw.trim();
+      if (sectionRef) entry.sectionId = sectionRef;
+      entries.push(entry);
+      return;
+    }
+  });
+  return entries.length ? entries : undefined;
+}
+
+function coerceSectionArray(payload: unknown): PCOSongArrangementSection[] | undefined {
+  if (!Array.isArray(payload)) return undefined;
+  const sections: PCOSongArrangementSection[] = [];
+  payload.forEach((value, idx) => {
+    if (!value) return;
+    if (typeof value === 'string') {
+      const text = value.trim();
+      if (!text) return;
+      const section: PCOSongArrangementSection = { id: `sec-${idx}`, name: text, lyrics: normalizeLyricBlock(text) };
+      enrichSectionLyrics(section);
+      sections.push(section);
+      return;
+    }
+    if (typeof value === 'object') {
+      const node = value as Record<string, unknown>;
+      const attrs = (node.attributes && typeof node.attributes === 'object') ? node.attributes as Record<string, unknown> : node;
+      const rawId = node.id ?? attrs.id ?? `sec-${idx}`;
+      const id = String(rawId ?? `sec-${idx}`).trim() || `sec-${idx}`;
+      const nameSource = attrs.name ?? attrs.title ?? attrs.label ?? attrs.sequence_label ?? attrs.sequenceLabel;
+      const seqLabelSource = attrs.sequence_label ?? attrs.sequenceLabel ?? attrs.label ?? attrs.short_label;
+      const lyricsSourceRaw = attrs.lyrics ?? attrs.content ?? attrs.text ?? attrs.body;
+      const name = typeof nameSource === 'string' && nameSource.trim() ? nameSource.trim() : `Section ${idx + 1}`;
+      const section: PCOSongArrangementSection = { id, name };
+      if (typeof seqLabelSource === 'string' && seqLabelSource.trim()) section.sequenceLabel = seqLabelSource.trim();
+      if (Array.isArray(lyricsSourceRaw)) {
+        const joined = lyricsSourceRaw.map((line) => typeof line === 'string' ? line : '').filter(Boolean).join('\n');
+        if (joined.trim()) section.lyrics = normalizeLyricBlock(joined);
+      } else if (lyricsSourceRaw && typeof lyricsSourceRaw === 'object') {
+        const maybe = (lyricsSourceRaw as any).text ?? (lyricsSourceRaw as any).body ?? (lyricsSourceRaw as any).content;
+        if (typeof maybe === 'string' && maybe.trim()) section.lyrics = normalizeLyricBlock(maybe);
+      } else if (typeof lyricsSourceRaw === 'string' && lyricsSourceRaw.trim()) {
+        section.lyrics = normalizeLyricBlock(lyricsSourceRaw);
+      }
+      enrichSectionLyrics(section);
+      sections.push(section);
+    }
+  });
+  return sections.length ? sections : undefined;
+}
+
 function extractNotes(attrs: Record<string, unknown>): { description?: string; notes?: string } {
   const rawDesc = typeof attrs.description === 'string'
     ? attrs.description
@@ -231,6 +453,119 @@ function httpsGetJson(pathname: string, headers: Record<string, string>): Promis
   });
 }
 
+async function fetchSongArrangementDetails(params: {
+  headers: Record<string, string>;
+  songId: string;
+  arrangementId: string;
+  arrangementName?: string;
+}): Promise<PCOPlanItemSongDetails> {
+  const { headers, songId, arrangementId, arrangementName } = params;
+  const basePath = `/services/v2/songs/${encodeURIComponent(songId)}/arrangements/${encodeURIComponent(arrangementId)}`;
+  const details: PCOPlanItemSongDetails = { songId, arrangementId, arrangementName };
+
+  const arrangementResp = await httpsGetJson(`${basePath}`, headers);
+  if (arrangementResp.status >= 200 && arrangementResp.status < 300 && arrangementResp.json?.data) {
+    const attrs = arrangementResp.json.data.attributes || {};
+    if (typeof attrs.name === 'string' && attrs.name.trim()) details.arrangementName = attrs.name.trim();
+    if (typeof attrs.sequence_short === 'string' && attrs.sequence_short.trim()) {
+      details.sequenceSummary = attrs.sequence_short.trim();
+    } else if (typeof attrs.sequence === 'string' && attrs.sequence.trim()) {
+      details.sequenceSummary = attrs.sequence.trim();
+    }
+
+    if (!details.sequence) {
+      const seqArray = coerceSequenceArray(attrs.sequence_full ?? attrs.sequence ?? attrs.sequence_short);
+      if (seqArray) details.sequence = seqArray;
+    }
+
+    if (!details.sections) {
+      const sectionArray = coerceSectionArray(attrs.sections ?? attrs.lyrics);
+      if (sectionArray) details.sections = sectionArray;
+    }
+
+    const relSeq = arrangementResp.json.data.relationships?.sequence?.data;
+    if (Array.isArray(relSeq)) {
+      const seqEntries: PCOPlanItemSongDetails['sequence'] = [];
+      for (const entry of relSeq) {
+        if (!entry || typeof entry.id !== 'string') continue;
+        const node: any = entry;
+        const seqItem: PCOSongArrangementSequenceEntry = { id: entry.id };
+        if (node.meta && typeof node.meta === 'object') {
+          const posRaw = (node.meta as any).position ?? (node.meta as any).index;
+          const labelRaw = (node.meta as any).label ?? (node.meta as any).name;
+          const posNum = typeof posRaw === 'number' ? posRaw : Number.parseInt(String(posRaw ?? ''), 10);
+          if (Number.isFinite(posNum)) seqItem.position = Number(posNum);
+          if (typeof labelRaw === 'string' && labelRaw.trim()) seqItem.label = labelRaw.trim();
+        }
+        seqEntries.push(seqItem);
+      }
+      if (seqEntries.length) details.sequence = seqEntries;
+    }
+  }
+
+  const sectionsResp = await httpsGetJson(`${basePath}/sections`, headers);
+  if (sectionsResp.status >= 200 && sectionsResp.status < 300) {
+    let sections: PCOSongArrangementSection[] | undefined;
+    const dataNode = sectionsResp.json?.data;
+    if (Array.isArray(dataNode)) {
+      sections = coerceSectionArray(dataNode);
+    } else if (dataNode && typeof dataNode === 'object') {
+      const attrs = (dataNode as any).attributes;
+      if (attrs && typeof attrs === 'object') {
+        sections = coerceSectionArray((attrs as any).sections ?? (attrs as any).items ?? (attrs as any).data);
+      }
+    }
+    if (!sections && Array.isArray(sectionsResp.json?.included)) {
+      sections = coerceSectionArray(sectionsResp.json?.included);
+    }
+    if (sections?.length) details.sections = sections;
+  }
+
+  if (!details.sequence || !details.sequence.length) {
+    const sequenceResp = await httpsGetJson(`${basePath}/sequence`, headers);
+    if (sequenceResp.status >= 200 && sequenceResp.status < 300 && Array.isArray(sequenceResp.json?.data)) {
+      const seqEntries: PCOSongArrangementSequenceEntry[] = [];
+      for (const node of sequenceResp.json.data) {
+        if (!node || typeof node.id !== 'string') continue;
+        const attrs = node.attributes || {};
+        const entry: PCOSongArrangementSequenceEntry = { id: node.id };
+        const posRaw = attrs.position ?? attrs.index ?? attrs.sequence_position;
+        const posNum = typeof posRaw === 'number' ? posRaw : Number.parseInt(String(posRaw ?? ''), 10);
+        if (Number.isFinite(posNum)) entry.position = Number(posNum);
+        const labelRaw = attrs.label ?? attrs.sequence_label ?? attrs.name;
+        if (typeof labelRaw === 'string' && labelRaw.trim()) entry.label = labelRaw.trim();
+        const sectionId = extractRelationshipId(node, 'section');
+        if (sectionId) entry.sectionId = sectionId;
+        seqEntries.push(entry);
+      }
+      if (seqEntries.length) details.sequence = seqEntries;
+    }
+  }
+
+  if (!details.sequence || !details.sequence.length) {
+    const fallback = coerceSequenceArray(arrangementResp.json?.included);
+    if (fallback) details.sequence = fallback;
+  }
+
+  if (!details.sections || !details.sections.length) {
+    const includeResp = await httpsGetJson(`${basePath}?include=sections.section_items,sections.items`, headers);
+    if (includeResp.status >= 200 && includeResp.status < 300) {
+      let sections: PCOSongArrangementSection[] | undefined;
+      const includeData = includeResp.json?.included ?? includeResp.json?.data;
+      sections = coerceSectionArray(includeData);
+      if (!sections && includeResp.json?.data && typeof includeResp.json.data === 'object') {
+        const attrs = (includeResp.json.data as any).attributes;
+        if (attrs && typeof attrs === 'object') {
+          sections = coerceSectionArray((attrs as any).sections ?? (attrs as any).items);
+        }
+      }
+      if (sections?.length) details.sections = sections;
+    }
+  }
+
+  return details;
+}
+
 export async function getNextPlan(): Promise<{ ok: boolean; plan?: PCOPlan; error?: string; statusCode?: number }> {
   const creds = getEnvCreds();
   if (!creds.appId || !creds.secret) return { ok: false, error: 'Missing PCO_APP_ID or PCO_SECRET in .env' };
@@ -283,12 +618,19 @@ export async function getNextPlan(): Promise<{ ok: boolean; plan?: PCOPlan; erro
       const len = typeof a.length === 'number' ? a.length
         : (typeof a.length_seconds === 'number' ? a.length_seconds
           : (typeof a.length_in_seconds === 'number' ? a.length_in_seconds : undefined));
-      // Temporarily piggyback extra fields on title to keep PlanItem minimal; UI doesn't read them directly
-      (it as any).__isHeader = isHeader;
-      (it as any).__lengthSeconds = len;
+
       const noteFields = extractNotes(a as Record<string, unknown>);
       const category = classifyPlanItem({ kind, title: a.title || a.description || 'Untitled', isHeader });
-      items.push({
+      const songId = extractRelationshipId(it, 'song');
+      const arrangementId = extractRelationshipId(it, 'arrangement')
+        ?? extractRelationshipId(it, 'selected_arrangement')
+        ?? extractRelationshipId(it, 'arrangements');
+      const arrangementNameRaw = a.selected_arrangement_name
+        ?? a.arrangement_name
+        ?? a.arrangement
+        ?? a.arrangement_label;
+
+      const item: PCOPlanItem = {
         id: String(it.id),
         kind,
         title: a.title || a.description || 'Untitled',
@@ -297,7 +639,20 @@ export async function getNextPlan(): Promise<{ ok: boolean; plan?: PCOPlan; erro
         notes: noteFields.notes,
         category,
         isHeader,
-      } as any);
+      };
+
+      if (Number.isFinite(len)) item.lengthSeconds = Number(len);
+
+      if (songId) {
+        const details: PCOPlanItemSongDetails = { songId };
+        if (arrangementId) details.arrangementId = arrangementId;
+        if (typeof arrangementNameRaw === 'string' && arrangementNameRaw.trim()) {
+          details.arrangementName = arrangementNameRaw.trim();
+        }
+        item.songDetails = details;
+      }
+
+      items.push(item);
     }
   }
 
@@ -362,7 +717,16 @@ export async function getNextPlan(): Promise<{ ok: boolean; plan?: PCOPlan; erro
 
         const noteFields = extractNotes(a as Record<string, unknown>);
         const category = classifyPlanItem({ kind, title: a.title || a.description || 'Untitled', isHeader });
-        const item: any = {
+        const songId = extractRelationshipId(node, 'song');
+        const arrangementId = extractRelationshipId(node, 'arrangement')
+          ?? extractRelationshipId(node, 'selected_arrangement')
+          ?? extractRelationshipId(node, 'arrangements');
+        const arrangementNameRaw = a.selected_arrangement_name
+          ?? a.arrangement_name
+          ?? a.arrangement
+          ?? a.arrangement_label;
+
+        const item: PCOPlanItem = {
           id: String(node.id),
           kind,
           title: a.title || a.description || 'Untitled',
@@ -373,7 +737,16 @@ export async function getNextPlan(): Promise<{ ok: boolean; plan?: PCOPlan; erro
         };
 
         if (isHeader) item.isHeader = true;
-        if (typeof len === 'number') item.lengthSeconds = len;
+        if (Number.isFinite(len)) item.lengthSeconds = Number(len);
+
+        if (songId) {
+          const details: PCOPlanItemSongDetails = { songId };
+          if (arrangementId) details.arrangementId = arrangementId;
+          if (typeof arrangementNameRaw === 'string' && arrangementNameRaw.trim()) {
+            details.arrangementName = arrangementNameRaw.trim();
+          }
+          item.songDetails = details;
+        }
 
         rebuilt.push(item);
       }
@@ -382,6 +755,47 @@ export async function getNextPlan(): Promise<{ ok: boolean; plan?: PCOPlan; erro
     }
   }
   // --- END: Strict "SERVICE" header slicing ---
+
+  const arrangementCache = new Map<string, PCOPlanItemSongDetails>();
+  const arrangementRequests: Array<{ key: string; songId: string; arrangementId: string; arrangementName?: string }> = [];
+
+  for (const item of items) {
+    const details = item.songDetails;
+    if (!details?.songId || !details.arrangementId) continue;
+    const key = `${details.songId}:${details.arrangementId}`;
+    if (arrangementCache.has(key)) continue;
+    arrangementCache.set(key, details);
+    arrangementRequests.push({ key, songId: details.songId, arrangementId: details.arrangementId, arrangementName: details.arrangementName });
+  }
+
+  for (const req of arrangementRequests) {
+    try {
+      const fetched = await fetchSongArrangementDetails({
+        headers: headers as any,
+        songId: req.songId,
+        arrangementId: req.arrangementId,
+        arrangementName: req.arrangementName,
+      });
+      arrangementCache.set(req.key, fetched);
+    } catch (err) {
+      console.warn('[PCO] Failed to fetch arrangement details', req, err);
+    }
+  }
+
+  for (const item of items) {
+    const details = item.songDetails;
+    if (!details?.songId || !details.arrangementId) continue;
+    const key = `${details.songId}:${details.arrangementId}`;
+    const fetched = arrangementCache.get(key);
+    if (!fetched) continue;
+    item.songDetails = {
+      ...details,
+      arrangementName: fetched.arrangementName ?? details.arrangementName,
+      sequenceSummary: fetched.sequenceSummary ?? details.sequenceSummary,
+      sections: fetched.sections ?? details.sections,
+      sequence: fetched.sequence ?? details.sequence,
+    };
+  }
 
   const mapped: PCOPlan = { id: String(planId), date, title, items } as any;
   return { ok: true, plan: mapped };
