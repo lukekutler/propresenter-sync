@@ -18,6 +18,7 @@ export type PCOSongArrangementSequenceEntry = {
   id: string;
   position?: number;
   label?: string;
+  number?: string;
   sectionId?: string;
 };
 
@@ -205,6 +206,48 @@ function normalizeLyricBlock(input: string): string {
   return expanded.join('\n');
 }
 
+const ROMAN_NUMERAL_VALUES: Record<string, number> = {
+  i: 1,
+  ii: 2,
+  iii: 3,
+  iv: 4,
+  v: 5,
+  vi: 6,
+  vii: 7,
+  viii: 8,
+  ix: 9,
+  x: 10,
+  xi: 11,
+  xii: 12,
+  xiii: 13,
+  xiv: 14,
+  xv: 15,
+  xvi: 16,
+  xvii: 17,
+  xviii: 18,
+  xix: 19,
+  xx: 20,
+};
+
+function normalizeSequenceNumber(value: unknown): string | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return String(Math.trunc(value));
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return undefined;
+    if (/^\d+$/.test(trimmed)) return trimmed;
+    const roman = trimmed.toLowerCase();
+    if (roman in ROMAN_NUMERAL_VALUES) return String(ROMAN_NUMERAL_VALUES[roman]);
+    if (/^\d+[a-z]$/i.test(trimmed)) return trimmed.toLowerCase();
+    return trimmed;
+  }
+  if (typeof value === 'bigint') {
+    return value.toString();
+  }
+  return undefined;
+}
+
 function splitLyricLine(line: string, maxLength = MAX_LYRIC_LINE_LENGTH): string[] {
   const segments: string[] = [];
   let remaining = line.trim();
@@ -313,10 +356,15 @@ function coerceSequenceArray(payload: unknown): PCOSongArrangementSequenceEntry[
       const sectionRef = sectionRefRaw !== undefined && sectionRefRaw !== null ? String(sectionRefRaw).trim() : undefined;
       const positionRaw = node.position ?? node.index ?? node.sequence_position;
       const position = typeof positionRaw === 'number' ? positionRaw : Number.parseInt(String(positionRaw ?? ''), 10);
+      const numberRaw = (node as any).number ?? (node as any).sequence_number ?? (node as any).sequenceNumber;
+      const metaNode = (node as any).meta && typeof (node as any).meta === 'object' ? (node as any).meta as Record<string, unknown> : undefined;
+      const metaNumber = metaNode ? (metaNode.number ?? (metaNode as any).sequence_number ?? (metaNode as any).sequenceNumber) : undefined;
       const entry: PCOSongArrangementSequenceEntry = { id };
       if (Number.isFinite(position)) entry.position = Number(position);
       if (labelRaw && labelRaw.trim()) entry.label = labelRaw.trim();
       if (sectionRef) entry.sectionId = sectionRef;
+      const normalizedNumber = normalizeSequenceNumber(numberRaw ?? metaNumber);
+      if (normalizedNumber) entry.number = normalizedNumber;
       entries.push(entry);
       return;
     }
@@ -493,9 +541,12 @@ async function fetchSongArrangementDetails(params: {
         if (node.meta && typeof node.meta === 'object') {
           const posRaw = (node.meta as any).position ?? (node.meta as any).index;
           const labelRaw = (node.meta as any).label ?? (node.meta as any).name;
+          const numberRaw = (node.meta as any).number ?? (node.meta as any).sequence_number ?? (node.meta as any).sequenceNumber;
           const posNum = typeof posRaw === 'number' ? posRaw : Number.parseInt(String(posRaw ?? ''), 10);
           if (Number.isFinite(posNum)) seqItem.position = Number(posNum);
           if (typeof labelRaw === 'string' && labelRaw.trim()) seqItem.label = labelRaw.trim();
+          const normalizedNumber = normalizeSequenceNumber(numberRaw);
+          if (normalizedNumber) seqItem.number = normalizedNumber;
         }
         seqEntries.push(seqItem);
       }
@@ -534,6 +585,9 @@ async function fetchSongArrangementDetails(params: {
         if (Number.isFinite(posNum)) entry.position = Number(posNum);
         const labelRaw = attrs.label ?? attrs.sequence_label ?? attrs.name;
         if (typeof labelRaw === 'string' && labelRaw.trim()) entry.label = labelRaw.trim();
+        const numberRaw = attrs.number ?? attrs.sequence_number ?? (attrs as any).sequenceNumber ?? (attrs as any).label_number;
+        const normalizedNumber = normalizeSequenceNumber(numberRaw);
+        if (normalizedNumber) entry.number = normalizedNumber;
         const sectionId = extractRelationshipId(node, 'section');
         if (sectionId) entry.sectionId = sectionId;
         seqEntries.push(entry);

@@ -222,6 +222,13 @@ type SongTemplatePayload = {
   textColor?: [number, number, number, number];
   fillColor?: [number, number, number, number];
   sections: SongTemplateSectionPayload[];
+  sequence?: {
+    id?: string;
+    label?: string;
+    number?: string;
+    position?: number;
+    sectionId?: string;
+  }[];
 };
 
 const NON_LYRIC_SECTION_PATTERN = /\b(intro|turn\s*around|turnaround|instrumental|interlude|outro|tag|ending)\b/i;
@@ -2315,7 +2322,7 @@ async function runPresentationSync(payload: PresentationSyncPayload) {
         if (categoryLabel === 'Song') {
           const songDetails = (item as any)?.songDetails;
           const rawSections: any[] = Array.isArray(songDetails?.sections) ? songDetails.sections : [];
-          const sectionsPayload: SongTemplateSectionPayload[] = rawSections
+          const mappedSections = rawSections
             .map((section) => {
               const rawSlides: any[] = Array.isArray(section?.lyricSlides) ? section.lyricSlides : [];
               const slides = rawSlides
@@ -2340,8 +2347,8 @@ async function runPresentationSync(payload: PresentationSyncPayload) {
                 sequenceLabel,
                 slides,
               } satisfies SongTemplateSectionPayload;
-            })
-            .filter((section): section is SongTemplateSectionPayload => Boolean(section));
+            });
+          const sectionsPayload = mappedSections.filter(Boolean) as SongTemplateSectionPayload[];
 
           const seenSectionIds = new Set<string>();
           const seenLabels = new Set<string>();
@@ -2373,27 +2380,50 @@ async function runPresentationSync(payload: PresentationSyncPayload) {
           if (!sectionsPayload.length) {
             broadcastLog(`[DEBUG] Song rewrite skipped (no lyric slides) • ${title}`);
           } else {
-            if (title.toLowerCase().includes('i thank god')) {
-              broadcastLog('[DEBUG] Song sections (I Thank God):');
-              for (const section of sectionsPayload) {
-                const label = section.sequenceLabel || section.name || '(unnamed)';
-                broadcastLog(`  - ${label}: ${section.slides.length} slides`);
-              }
-              if (Array.isArray(songDetails?.sequence)) {
-                broadcastLog('[DEBUG] Song sequence entries (I Thank God):');
-                for (const entry of songDetails.sequence) {
-                  const label = typeof entry?.label === 'string' ? entry.label : '(no label)';
-                  broadcastLog(`  • ${label}`);
-                }
+          if (title.toLowerCase().includes('i thank god')) {
+            broadcastLog('[DEBUG] Song sections (I Thank God):');
+            for (const section of sectionsPayload) {
+              const label = section.sequenceLabel || section.name || '(unnamed)';
+              broadcastLog(`  - ${label}: ${section.slides.length} slides`);
+            }
+            if (Array.isArray(songDetails?.sequence)) {
+              broadcastLog('[DEBUG] Song sequence entries (I Thank God):');
+              for (const entry of songDetails.sequence) {
+                const label = typeof entry?.label === 'string' ? entry.label : '(no label)';
+                broadcastLog(`  • ${label}`);
               }
             }
-            broadcastLog(`[INFO] Song rewrite start • ${title} -> ${hit.path}`);
-            const songPayload: SongTemplatePayload = {
-              title,
-              groupName: typeof songDetails?.groupName === 'string' ? songDetails.groupName : 'Lyrics',
-              arrangementName: typeof songDetails?.arrangementName === 'string' ? songDetails.arrangementName : 'Default',
-              sections: sectionsPayload,
-            };
+          }
+          broadcastLog(`[INFO] Song rewrite start • ${title} -> ${hit.path}`);
+          const sequencePayload = Array.isArray(songDetails?.sequence)
+            ? songDetails.sequence
+                .map((entry) => {
+                  if (!entry || typeof entry !== 'object') return undefined;
+                  const id = typeof entry.id === 'string' ? entry.id : undefined;
+                  const label = typeof entry.label === 'string' ? entry.label : undefined;
+                  const sectionId = typeof entry.sectionId === 'string' ? entry.sectionId : undefined;
+                  const position = typeof entry.position === 'number' && Number.isFinite(entry.position)
+                    ? entry.position
+                    : undefined;
+                  let number: string | undefined;
+                  const rawNumber = (entry as any).number;
+                  if (typeof rawNumber === 'number' && Number.isFinite(rawNumber)) {
+                    number = String(Math.trunc(rawNumber));
+                  } else if (typeof rawNumber === 'string' && rawNumber.trim()) {
+                    number = rawNumber.trim();
+                  }
+                  if (!id && !label && !sectionId && !number && position === undefined) return undefined;
+                  return { id, label, sectionId, position, number };
+                })
+                .filter((node): node is NonNullable<typeof node> => Boolean(node))
+            : undefined;
+          const songPayload: SongTemplatePayload = {
+            title,
+            groupName: typeof songDetails?.groupName === 'string' ? songDetails.groupName : 'Lyrics',
+            arrangementName: typeof songDetails?.arrangementName === 'string' ? songDetails.arrangementName : 'Default',
+            sections: sectionsPayload,
+            sequence: sequencePayload,
+          };
             try {
               const songRes = await applySongTemplate(hit.path, songPayload);
               if (!songRes.ok) {

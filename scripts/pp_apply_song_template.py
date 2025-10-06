@@ -26,11 +26,14 @@ presentation.
 from __future__ import annotations
 
 import json
+import math
 import os
+import re
 import sys
 import uuid
 import zipfile
 import tempfile
+from collections import defaultdict
 from pathlib import Path
 from typing import Any, Iterable, Optional, Tuple
 
@@ -111,6 +114,90 @@ def normalize_label(value: Any) -> str:
     if not isinstance(value, str):
         return ""
     return " ".join(value.strip().lower().split())
+
+
+ROMAN_NUMERAL_MAP = {
+    "i": 1,
+    "ii": 2,
+    "iii": 3,
+    "iv": 4,
+    "v": 5,
+    "vi": 6,
+    "vii": 7,
+    "viii": 8,
+    "ix": 9,
+    "x": 10,
+    "xi": 11,
+    "xii": 12,
+    "xiii": 13,
+    "xiv": 14,
+    "xv": 15,
+    "xvi": 16,
+    "xvii": 17,
+    "xviii": 18,
+    "xix": 19,
+    "xx": 20,
+}
+
+LABEL_NUMBER_SUFFIX_RE = re.compile(r"^(?P<label>.+?)\s*(?P<number>\d+[a-z]?|[ivxlcdm]+)$", re.IGNORECASE)
+
+
+def normalize_sequence_number(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    if isinstance(value, bool):  # bool is subclass of int, guard it out
+        return None
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            return None
+        return str(int(value))
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        if text.isdigit():
+            return text
+        lowered = text.lower()
+        if lowered in ROMAN_NUMERAL_MAP:
+            return str(ROMAN_NUMERAL_MAP[lowered])
+        if re.fullmatch(r"\d+[a-z]", text, flags=re.IGNORECASE):
+            return text.lower()
+        return text
+    return None
+
+
+def extract_label_components(value: Any) -> tuple[str, Optional[str]]:
+    normalized = normalize_label(value)
+    if not normalized:
+        return "", None
+    parts = normalized.split()
+    if len(parts) >= 2:
+        last = parts[-1]
+        number = normalize_sequence_number(last)
+        if number is not None:
+            base = " ".join(parts[:-1]).strip()
+            if base:
+                return base, number
+    match = LABEL_NUMBER_SUFFIX_RE.match(normalized)
+    if match:
+        base = normalize_label(match.group("label"))
+        number = normalize_sequence_number(match.group("number"))
+        if base:
+            return base, number
+    return normalized, None
+
+
+def describe_section(section: Optional[dict[str, Any]]) -> str:
+    if not isinstance(section, dict):
+        return "(no match)"
+    for key in ("sequenceLabel", "name", "label"):
+        value = section.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    identifier = section.get("id")
+    return str(identifier).strip() if identifier else "(unnamed)"
 
 
 def rtf_escape(text: str) -> str:
@@ -367,66 +454,173 @@ def rebuild_song(doc: presentation_pb2.Presentation, payload: dict[str, Any]) ->
     arrangement_group_ids: list[str] = []
 
     sections_list = [section for section in sections if isinstance(section, dict)]
-    sections_by_id: dict[str, dict[str, Any]] = {}
-    sections_by_label: dict[str, dict[str, Any]] = {}
-    for section in sections_list:
+    section_records: list[dict[str, Any]] = []
+    sections_by_id: defaultdict[str, list[int]] = defaultdict(list)
+    labels_to_indices: defaultdict[str, list[int]] = defaultdict(list)
+    base_number_to_indices: defaultdict[tuple[str, Optional[str]], list[int]] = defaultdict(list)
+
+    for idx, section in enumerate(sections_list):
         section_id = str(section.get("id") or "").strip()
-        if section_id:
-            sections_by_id[section_id] = section
+        normalized_labels: set[str] = set()
+        base_pairs: set[tuple[str, Optional[str]]] = set()
+
         for key_name in ("sequenceLabel", "name"):
-            key = normalize_label(section.get(key_name))
-            if key and key not in sections_by_label:
-                sections_by_label[key] = section
+            raw_label = section.get(key_name)
+            norm = normalize_label(raw_label)
+            if norm:
+                normalized_labels.add(norm)
+            base, number = extract_label_components(raw_label)
+            if base:
+                base_pairs.add((base, number))
+                base_pairs.add((base, None))
+
+        record = {
+            "section": section,
+            "id": section_id or None,
+        }
+        section_records.append(record)
+
+        if section_id:
+            sections_by_id[section_id].append(idx)
+        for norm in normalized_labels:
+            labels_to_indices[norm].append(idx)
+        for base_pair in base_pairs:
+            base_number_to_indices[base_pair].append(idx)
+
+        # Preserve normalized labels for later matching fallback
+        record["normalized_labels"] = normalized_labels
+        record["base_pairs"] = base_pairs
 
     sequence_entries = payload.get("sequence")
-    ordered_units: list[tuple[Optional[dict[str, Any]], Optional[str]]] = []
-    used_section_ids: set[str] = set()
-    if isinstance(sequence_entries, list) and sequence_entries:
-        def sort_key(entry: dict[str, Any]) -> tuple[float, int]:
-            position = entry.get("position")
-            if isinstance(position, (int, float)):
-                return (float(position), 0)
-            try:
-                return (float(position), 0)
-            except Exception:
-                return (float(entry.get("_order", 0)), 0)
+    ordered_units: list[tuple[Optional[dict[str, Any]], Optional[str], Optional[int]]] = []
+    used_indices: set[int] = set()
+    match_logs: list[str] = []
 
-        for idx, raw_entry in enumerate(sequence_entries):
+    def select_candidate(indices: Iterable[int], reason: str, *, allow_reuse: bool = False) -> tuple[Optional[int], str]:
+        candidates = list(indices)
+        if not candidates:
+            return None, reason
+        available = candidates if allow_reuse else [idx for idx in candidates if idx not in used_indices]
+        if not available:
+            return None, reason
+        chosen = available[0]
+        reused = chosen in used_indices
+        if not reused:
+            used_indices.add(chosen)
+        result_reason = reason
+        if reused:
+            result_reason = f"{reason} (reuse)"
+        if len(available) > 1:
+            result_reason = f"{result_reason} (ambiguous:{len(available)})"
+        return chosen, result_reason
+
+    if isinstance(sequence_entries, list) and sequence_entries:
+        for seq_index, raw_entry in enumerate(sequence_entries):
             if not isinstance(raw_entry, dict):
                 continue
-            entry = dict(raw_entry)
-            entry["_order"] = idx
-            section = None
-            section_id = str(entry.get("sectionId") or entry.get("id") or "").strip()
-            label = str(entry.get("label") or "").strip()
-            if section_id and section_id in sections_by_id:
-                section = sections_by_id[section_id]
-                used_section_ids.add(section_id)
-            else:
-                key = normalize_label(label)
-                if key and key in sections_by_label:
-                    section = sections_by_label[key]
-                    sec_id = str(section.get("id") or "").strip()
-                    if sec_id:
-                        used_section_ids.add(sec_id)
-            ordered_units.append((section, label or None))
 
-        for section in sections_list:
-            sec_id = str(section.get("id") or "").strip()
-            if sec_id and sec_id in used_section_ids:
+            section_match_index: Optional[int] = None
+            match_reason = "unmatched"
+
+            def try_select(indices: Iterable[int], reason: str, *, allow_reuse: bool = False) -> bool:
+                nonlocal section_match_index, match_reason
+                if section_match_index is not None:
+                    return True
+                candidate_idx, candidate_reason = select_candidate(indices, reason, allow_reuse=allow_reuse)
+                if candidate_idx is not None:
+                    section_match_index = candidate_idx
+                    match_reason = candidate_reason
+                    return True
+                return False
+
+            label_raw = raw_entry.get("label")
+            label_text = str(label_raw).strip() if isinstance(label_raw, str) else ""
+            normalized_label = normalize_label(label_text)
+            base_from_label, number_from_label = extract_label_components(label_text)
+
+            entry_number = normalize_sequence_number(raw_entry.get("number")) or number_from_label
+            base_key = base_from_label or normalized_label
+
+            section_id_value = raw_entry.get("sectionId")
+            section_id = str(section_id_value).strip() if isinstance(section_id_value, str) else ""
+            if section_id:
+                try_select(sections_by_id.get(section_id, []), "section-id")
+
+            if entry_number and base_key:
+                combined_norm = f"{base_key} {entry_number}".strip()
+                if combined_norm:
+                    try_select(labels_to_indices.get(combined_norm, []), "label+number")
+                    if section_match_index is None:
+                        try_select(labels_to_indices.get(combined_norm, []), "label+number", allow_reuse=True)
+
+            if entry_number and base_key:
+                try_select(base_number_to_indices.get((base_key, entry_number), []), "base+number")
+                if section_match_index is None:
+                    try_select(base_number_to_indices.get((base_key, entry_number), []), "base+number", allow_reuse=True)
+
+            if normalized_label:
+                try_select(labels_to_indices.get(normalized_label, []), "label")
+                if section_match_index is None:
+                    try_select(labels_to_indices.get(normalized_label, []), "label", allow_reuse=True)
+
+            if base_key:
+                try_select(base_number_to_indices.get((base_key, None), []), "base")
+                if section_match_index is None:
+                    try_select(base_number_to_indices.get((base_key, None), []), "base", allow_reuse=True)
+
+            matched_section: Optional[dict[str, Any]] = None
+            if section_match_index is not None:
+                matched_section = section_records[section_match_index]["section"]
+
+            sequence_label_value: Optional[str] = None
+            if label_text:
+                sequence_label_value = label_text
+                if entry_number:
+                    target_norm = f"{(base_key or '').strip()} {entry_number}".strip()
+                    if target_norm and normalize_label(label_text) != target_norm:
+                        sequence_label_value = f"{label_text} {entry_number}".strip()
+            elif entry_number and matched_section:
+                candidate_label = matched_section.get("sequenceLabel") or matched_section.get("name")
+                if isinstance(candidate_label, str) and candidate_label.strip():
+                    sequence_label_value = candidate_label.strip()
+                elif base_key:
+                    sequence_label_value = " ".join(part.capitalize() for part in f"{base_key} {entry_number}".split())
+
+            if not sequence_label_value and matched_section:
+                candidate_label = matched_section.get("sequenceLabel") or matched_section.get("name")
+                if isinstance(candidate_label, str) and candidate_label.strip():
+                    sequence_label_value = candidate_label.strip()
+
+            ordered_units.append((matched_section, sequence_label_value, section_match_index))
+
+            section_desc = describe_section(matched_section)
+            match_logs.append(
+                f"seq#{seq_index + 1:02d} • label='{label_text or '(none)'}' number='{entry_number or '-'}' -> {section_desc} [{match_reason}]"
+            )
+
+        for idx, record in enumerate(section_records):
+            if idx in used_indices:
                 continue
-            ordered_units.append((section, None))
+            ordered_units.append((record["section"], None, idx))
+            section_desc = describe_section(record["section"])
+            match_logs.append(f"leftover section • {section_desc}")
     else:
-        for section in sections_list:
-            ordered_units.append((section, None))
+        for idx, record in enumerate(section_records):
+            ordered_units.append((record["section"], None, idx))
 
-    for index, (section, sequence_label) in enumerate(ordered_units):
+    group_cache: dict[int, dict[str, Any]] = {}
+
+    for index, (section, sequence_label, section_record_idx) in enumerate(ordered_units):
         section_name_source = sequence_label or str(section.get("sequenceLabel") if section else "") or str(section.get("name") if section else "")
         section_name = section_name_source.strip() if section_name_source else ""
         if not section_name:
             section_name = f"Section {index + 1}"
 
         section_is_non_lyric = is_non_lyric_section(section_name)
+
+        if section_record_idx is not None and section_record_idx in group_cache:
+            arrangement_group_ids.append(group_cache[section_record_idx]["group_uuid"])
+            continue
 
         slides: list[list[str]] = []
         if section_is_non_lyric:
@@ -493,6 +687,9 @@ def rebuild_song(doc: presentation_pb2.Presentation, payload: dict[str, Any]) ->
 
             group.cue_identifiers.add().string = cue_uuid
 
+        if section_record_idx is not None:
+            group_cache[section_record_idx] = {"group_uuid": group_uuid}
+
     if arrangement_group_ids:
         arrangement = doc.arrangements.add()
         arrangement_uuid = new_uuid()
@@ -501,6 +698,12 @@ def rebuild_song(doc: presentation_pb2.Presentation, payload: dict[str, Any]) ->
         for group_uuid in arrangement_group_ids:
             arrangement.group_identifiers.add().string = group_uuid
         doc.selected_arrangement.string = arrangement_uuid
+
+    if match_logs:
+        header_title = title or arrangement_name or "Song"
+        print(f"SEQUENCE MATCH SUMMARY • {header_title}")
+        for line in match_logs:
+            print(f"  {line}")
 
 
 def main(argv: list[str]) -> int:
