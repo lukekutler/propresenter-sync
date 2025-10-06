@@ -23,6 +23,13 @@ export type PlanItemSongDetails = {
   sequenceSummary?: string;
   sections?: PlanSongSection[];
   sequence?: PlanSongSequenceEntry[];
+  fontFace?: string;
+  fontFamily?: string;
+  fontSize?: number;
+  fontBold?: boolean;
+  allCaps?: boolean;
+  textColor?: [number, number, number, number];
+  fillColor?: [number, number, number, number];
 };
 
 export type PlanItem = {

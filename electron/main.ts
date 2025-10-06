@@ -215,7 +215,12 @@ type SongTemplatePayload = {
   groupName?: string;
   arrangementName?: string;
   fontFace?: string;
+  fontFamily?: string;
   fontSize?: number;
+  fontBold?: boolean;
+  allCaps?: boolean;
+  textColor?: [number, number, number, number];
+  fillColor?: [number, number, number, number];
   sections: SongTemplateSectionPayload[];
 };
 

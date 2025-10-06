@@ -21,6 +21,13 @@ type SundayPrepPlanItemSongDetails = {
   sequenceSummary?: string;
   sections?: SundayPrepSongSection[];
   sequence?: SundayPrepSongSequenceEntry[];
+  fontFace?: string;
+  fontFamily?: string;
+  fontSize?: number;
+  fontBold?: boolean;
+  allCaps?: boolean;
+  textColor?: [number, number, number, number];
+  fillColor?: [number, number, number, number];
 };
 
 type SundayPrepPlanItem = {
