@@ -52,6 +52,17 @@ import slide_pb2  # type: ignore
 import basicTypes_pb2  # type: ignore
 import cue_pb2  # type: ignore
 
+NON_LYRIC_KEYWORDS = (
+    "intro",
+    "turnaround",
+    "turn around",
+    "instrumental",
+    "outro",
+    "interlude",
+    "tag",
+    "ending",
+)
+
 
 def new_uuid() -> str:
     return str(uuid.uuid4()).upper()
@@ -87,6 +98,19 @@ def parse_color(value: Any, default: tuple[float, float, float, float]) -> tuple
 def sanitize_text(value: str) -> str:
     normalized = value.replace('\u2019', "'")
     return " ".join(normalized.strip().split())
+
+
+def is_non_lyric_section(name: str) -> bool:
+    lowered = name.strip().lower()
+    if not lowered:
+        return False
+    return any(keyword in lowered for keyword in NON_LYRIC_KEYWORDS)
+
+
+def normalize_label(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    return " ".join(value.strip().lower().split())
 
 
 def rtf_escape(text: str) -> str:
@@ -163,6 +187,7 @@ def build_lyric_slide(
     slide_element = slide.elements.add()
     element = slide_element.element
     element.uuid.string = new_uuid()
+    element.name = "Lyrics"
     element.name = "Lyrics"
     element.bounds.origin.x = 150.0
     element.bounds.origin.y = 405.4
@@ -341,20 +366,92 @@ def rebuild_song(doc: presentation_pb2.Presentation, payload: dict[str, Any]) ->
 
     arrangement_group_ids: list[str] = []
 
-    for section_index, section in enumerate(sections):
-        slides = section.get("slides") or []
-        slides = [
-            [str(line).strip() for line in slide if str(line or "").strip()]
-            for slide in slides
-            if isinstance(slide, list)
-        ]
-        slides = [slide for slide in slides if slide]
-        if not slides:
-            continue
+    sections_list = [section for section in sections if isinstance(section, dict)]
+    sections_by_id: dict[str, dict[str, Any]] = {}
+    sections_by_label: dict[str, dict[str, Any]] = {}
+    for section in sections_list:
+        section_id = str(section.get("id") or "").strip()
+        if section_id:
+            sections_by_id[section_id] = section
+        for key_name in ("sequenceLabel", "name"):
+            key = normalize_label(section.get(key_name))
+            if key and key not in sections_by_label:
+                sections_by_label[key] = section
 
-        section_name = str(section.get("sequenceLabel") or section.get("name") or "").strip()
+    sequence_entries = payload.get("sequence")
+    ordered_units: list[tuple[Optional[dict[str, Any]], Optional[str]]] = []
+    used_section_ids: set[str] = set()
+    if isinstance(sequence_entries, list) and sequence_entries:
+        def sort_key(entry: dict[str, Any]) -> tuple[float, int]:
+            position = entry.get("position")
+            if isinstance(position, (int, float)):
+                return (float(position), 0)
+            try:
+                return (float(position), 0)
+            except Exception:
+                return (float(entry.get("_order", 0)), 0)
+
+        for idx, raw_entry in enumerate(sequence_entries):
+            if not isinstance(raw_entry, dict):
+                continue
+            entry = dict(raw_entry)
+            entry["_order"] = idx
+            section = None
+            section_id = str(entry.get("sectionId") or entry.get("id") or "").strip()
+            label = str(entry.get("label") or "").strip()
+            if section_id and section_id in sections_by_id:
+                section = sections_by_id[section_id]
+                used_section_ids.add(section_id)
+            else:
+                key = normalize_label(label)
+                if key and key in sections_by_label:
+                    section = sections_by_label[key]
+                    sec_id = str(section.get("id") or "").strip()
+                    if sec_id:
+                        used_section_ids.add(sec_id)
+            ordered_units.append((section, label or None))
+
+        for section in sections_list:
+            sec_id = str(section.get("id") or "").strip()
+            if sec_id and sec_id in used_section_ids:
+                continue
+            ordered_units.append((section, None))
+    else:
+        for section in sections_list:
+            ordered_units.append((section, None))
+
+    for index, (section, sequence_label) in enumerate(ordered_units):
+        section_name_source = sequence_label or str(section.get("sequenceLabel") if section else "") or str(section.get("name") if section else "")
+        section_name = section_name_source.strip() if section_name_source else ""
         if not section_name:
-            section_name = f"Section {section_index + 1}"
+            section_name = f"Section {index + 1}"
+
+        section_is_non_lyric = is_non_lyric_section(section_name)
+
+        slides: list[list[str]] = []
+        if section_is_non_lyric:
+            slides = [[]]
+        elif section:
+            raw_slides = section.get("slides") or section.get("lyricSlides") or []
+            if isinstance(raw_slides, list):
+                for raw_slide in raw_slides:
+                    if not isinstance(raw_slide, list):
+                        continue
+                    cleaned = [str(line).strip() for line in raw_slide if str(line or "").strip()]
+                    if cleaned:
+                        slides.append(cleaned)
+            if not slides:
+                raw_lines = section.get("lyricLines")
+                if isinstance(raw_lines, list):
+                    cleaned_lines = [str(line).strip() for line in raw_lines if str(line or "").strip()]
+                    if cleaned_lines:
+                        slides.append(cleaned_lines)
+
+        if not slides:
+            if section_is_non_lyric:
+                slides = [[]]
+            else:
+                continue
 
         group = doc.cue_groups.add()
         group_uuid = new_uuid()
@@ -378,8 +475,7 @@ def rebuild_song(doc: presentation_pb2.Presentation, payload: dict[str, Any]) ->
             action.type = action_pb2.Action.ActionType.ACTION_TYPE_PRESENTATION_SLIDE
             action.isEnabled = True
             action.name = section_name
-            action.label.text = section_name
-            set_color(action.label.color, 0.11, 0.65, 0.96, 1.0)
+            action.label.Clear()
             action.layer_identification.uuid.string = "slides"
             action.layer_identification.name = "Slides"
 

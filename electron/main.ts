@@ -224,6 +224,8 @@ type SongTemplatePayload = {
   sections: SongTemplateSectionPayload[];
 };
 
+const NON_LYRIC_SECTION_PATTERN = /\b(intro|turn\s*around|turnaround|instrumental|interlude|outro|tag|ending)\b/i;
+
 const DEFAULT_TRANSITION_TIMER_NAME = 'Service Item Timer';
 const TRANSITION_TOPIC_STOP_WORDS = new Set(['the', 'and', 'for', 'with', 'from', 'into', 'after', 'next', 'step', 'story', 'jr', 'jr.', 'grades', 'grade', 'service', 'news']);
 const BULLET_MARKERS_REGEX = /[\u2022\u2023\u25E6\u2043\u2219\u25AA\u25CF\u25CB\u25C6\u2605\u25B8\u25BA\u25A0\u25A1\u25D8\u25D9\u2023❖⚑•▪▫➤▶➔‣◦⁃–—]/g;
@@ -2319,19 +2321,72 @@ async function runPresentationSync(payload: PresentationSyncPayload) {
               const slides = rawSlides
                 .map((slide) => Array.isArray(slide) ? slide.map((line) => String(line ?? '').trim()).filter((line) => line.length) : [])
                 .filter((slide) => slide.length > 0);
-              if (!slides.length) return null;
+              const sequenceLabel = typeof section?.sequenceLabel === 'string' ? section.sequenceLabel : undefined;
+              const sectionName = typeof section?.name === 'string' ? section.name : undefined;
+              const labelSource = sequenceLabel || sectionName || '';
+              const isNonLyric = NON_LYRIC_SECTION_PATTERN.test(labelSource);
+              if (!slides.length) {
+                if (!isNonLyric) return null;
+                return {
+                  id: typeof section?.id === 'string' ? section.id : undefined,
+                  name: sectionName,
+                  sequenceLabel,
+                  slides: [],
+                } satisfies SongTemplateSectionPayload;
+              }
               return {
                 id: typeof section?.id === 'string' ? section.id : undefined,
-                name: typeof section?.name === 'string' ? section.name : undefined,
-                sequenceLabel: typeof section?.sequenceLabel === 'string' ? section.sequenceLabel : undefined,
+                name: sectionName,
+                sequenceLabel,
                 slides,
               } satisfies SongTemplateSectionPayload;
             })
             .filter((section): section is SongTemplateSectionPayload => Boolean(section));
 
+          const seenSectionIds = new Set<string>();
+          const seenLabels = new Set<string>();
+          for (const section of sectionsPayload) {
+            if (section.id) seenSectionIds.add(section.id);
+            const key = (section.sequenceLabel || section.name || '').trim().toLowerCase();
+            if (key) seenLabels.add(key);
+          }
+
+          const sequenceEntries: any[] = Array.isArray(songDetails?.sequence) ? songDetails.sequence : [];
+          for (const entry of sequenceEntries) {
+            const label = typeof entry?.label === 'string' ? entry.label.trim() : '';
+            const sectionId = typeof entry?.sectionId === 'string' ? entry.sectionId : undefined;
+            if (!label && !sectionId) continue;
+            if (sectionId && seenSectionIds.has(sectionId)) continue;
+            const labelKey = label.toLowerCase();
+            if (labelKey && seenLabels.has(labelKey)) continue;
+            if (!NON_LYRIC_SECTION_PATTERN.test(label)) continue;
+            sectionsPayload.push({
+              id: sectionId,
+              name: label || undefined,
+              sequenceLabel: label || undefined,
+              slides: [],
+            });
+            if (sectionId) seenSectionIds.add(sectionId);
+            if (labelKey) seenLabels.add(labelKey);
+          }
+
           if (!sectionsPayload.length) {
             broadcastLog(`[DEBUG] Song rewrite skipped (no lyric slides) • ${title}`);
           } else {
+            if (title.toLowerCase().includes('i thank god')) {
+              broadcastLog('[DEBUG] Song sections (I Thank God):');
+              for (const section of sectionsPayload) {
+                const label = section.sequenceLabel || section.name || '(unnamed)';
+                broadcastLog(`  - ${label}: ${section.slides.length} slides`);
+              }
+              if (Array.isArray(songDetails?.sequence)) {
+                broadcastLog('[DEBUG] Song sequence entries (I Thank God):');
+                for (const entry of songDetails.sequence) {
+                  const label = typeof entry?.label === 'string' ? entry.label : '(no label)';
+                  broadcastLog(`  • ${label}`);
+                }
+              }
+            }
             broadcastLog(`[INFO] Song rewrite start • ${title} -> ${hit.path}`);
             const songPayload: SongTemplatePayload = {
               title,

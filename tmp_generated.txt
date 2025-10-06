@@ -26,21 +26,47 @@ chord_chart {
   platform: PLATFORM_MACOS
 }
 selected_arrangement {
-  string: "81001A97-B931-4E78-992B-A4956164D749"
+  string: "FE4A0366-893C-465B-83B2-FF9C1D980D6C"
 }
 arrangements {
   uuid {
-    string: "81001A97-B931-4E78-992B-A4956164D749"
+    string: "FE4A0366-893C-465B-83B2-FF9C1D980D6C"
   }
   name: "Default"
   group_identifiers {
-    string: "95B50625-1D22-48B4-9D40-5D816A917ADA"
+    string: "6B1945CC-F791-4F3A-B873-B45E6F758B64"
+  }
+  group_identifiers {
+    string: "E2D8C6DA-E790-42A7-AC6C-367B1BA1B158"
+  }
+  group_identifiers {
+    string: "F782151A-EDE2-49F6-9EA4-2EF877CA3587"
   }
 }
 cue_groups {
   group {
     uuid {
-      string: "95B50625-1D22-48B4-9D40-5D816A917ADA"
+      string: "6B1945CC-F791-4F3A-B873-B45E6F758B64"
+    }
+    name: "Intro"
+    color {
+      green: 0.466666669
+      blue: 0.8
+      alpha: 1
+    }
+    application_group_identifier {
+      string: "597AAEBC-52CF-41E6-AB32-43793EB5683F"
+    }
+    application_group_name: "Intro"
+  }
+  cue_identifiers {
+    string: "7C9BB559-2129-40C2-969A-3589DEAE8ADD"
+  }
+}
+cue_groups {
+  group {
+    uuid {
+      string: "E2D8C6DA-E790-42A7-AC6C-367B1BA1B158"
     }
     name: "Verse 1"
     color {
@@ -49,26 +75,55 @@ cue_groups {
       alpha: 1
     }
     application_group_identifier {
-      string: "CE8ED978-A790-4F56-A98C-00BDDE0FA9F1"
+      string: "542FAEB0-4719-47A8-A832-100DD4DEB268"
     }
     application_group_name: "Verse 1"
   }
   cue_identifiers {
-    string: "899397DA-A5D0-4EC1-A62C-AA9944782166"
+    string: "30F661E0-AF24-48F7-818E-AA2461F4FEFC"
+  }
+}
+cue_groups {
+  group {
+    uuid {
+      string: "F782151A-EDE2-49F6-9EA4-2EF877CA3587"
+    }
+    name: "Turnaround"
+    color {
+      green: 0.466666669
+      blue: 0.8
+      alpha: 1
+    }
+    application_group_identifier {
+      string: "5D133C8C-F6FF-41D5-9981-6B1B6E693B68"
+    }
+    application_group_name: "Turnaround"
+  }
+  cue_identifiers {
+    string: "FE0E4FF5-D557-483E-81FD-0642EB4B739C"
   }
 }
 cues {
   uuid {
-    string: "899397DA-A5D0-4EC1-A62C-AA9944782166"
+    string: "7C9BB559-2129-40C2-969A-3589DEAE8ADD"
   }
   completion_action_type: COMPLETION_ACTION_TYPE_LAST
   hot_key {
   }
   actions {
     uuid {
-      string: "2C304C90-2288-40D9-A174-D7552AA6619B"
+      string: "901951BD-04F1-4623-BB1E-4DDD97B269B6"
+    }
+    name: "Intro"
+    label {
     }
     isEnabled: true
+    layer_identification {
+      uuid {
+        string: "slides"
+      }
+      name: "Slides"
+    }
     type: ACTION_TYPE_PRESENTATION_SLIDE
     slide {
       presentation {
@@ -76,8 +131,206 @@ cues {
           elements {
             element {
               uuid {
-                string: "41B0FE94-5CFA-4A3B-93FB-142A7A242411"
+                string: "1852CE17-89C2-4325-8CDF-5CF5B11CCC7F"
               }
+              name: "Lyrics"
+              bounds {
+                origin {
+                  x: 150
+                  y: 405.4
+                }
+                size {
+                  width: 1620
+                  height: 269.2
+                }
+              }
+              opacity: 1
+              path {
+                closed: true
+                points {
+                  point {
+                  }
+                  q0 {
+                  }
+                  q1 {
+                  }
+                }
+                points {
+                  point {
+                    x: 1
+                  }
+                  q0 {
+                    x: 1
+                  }
+                  q1 {
+                    x: 1
+                  }
+                }
+                points {
+                  point {
+                    x: 1
+                    y: 1
+                  }
+                  q0 {
+                    x: 1
+                    y: 1
+                  }
+                  q1 {
+                    x: 1
+                    y: 1
+                  }
+                }
+                points {
+                  point {
+                    y: 1
+                  }
+                  q0 {
+                    y: 1
+                  }
+                  q1 {
+                    y: 1
+                  }
+                }
+                shape {
+                  type: TYPE_RECTANGLE
+                }
+              }
+              fill {
+                color {
+                  red: 0.13
+                  green: 0.59
+                  blue: 0.95
+                  alpha: 1
+                }
+              }
+              stroke {
+                width: 3
+                color {
+                  red: 1
+                  green: 1
+                  blue: 1
+                  alpha: 1
+                }
+              }
+              shadow {
+                angle: 315
+                offset: 5
+                radius: 5
+                color {
+                  alpha: 1
+                }
+                opacity: 0.75
+              }
+              feather {
+                radius: 0.05
+              }
+              text {
+                attributes {
+                  font {
+                    name: "BebasNeueBold"
+                    size: 120
+                    bold: true
+                    family: "Bebas Neue"
+                    face: "BebasNeueBold"
+                  }
+                  capitalization: CAPITALIZATION_ALL_CAPS
+                  text_solid_fill {
+                    red: 1
+                    green: 1
+                    blue: 1
+                    alpha: 1
+                  }
+                  paragraph_style {
+                    alignment: ALIGNMENT_CENTER
+                    line_height_multiple: 0.8
+                    default_tab_interval: 65
+                  }
+                }
+                shadow {
+                  angle: 315
+                  offset: 5
+                  radius: 5
+                  color {
+                    alpha: 1
+                  }
+                  opacity: 0.75
+                }
+                rtf_data: "{\\rtf1\\ansi\\ansicpg1252\\cocoartf2822\\cocoatextscaling0\\cocoaplatform0{\\fonttbl\\f0\\fnil\\fcharset0 BebasNeueBold;}{\\colortbl;\\red255\\green255\\blue255;\\red255\\green255\\blue255;\\red0\\green0\\blue0;}{\\*\\expandedcolortbl;;\\cssrgb\\c100000\\c100000\\c100000;\\csgray\\c0;}\\deftab1300\\n\\pard\\tx0\\pardeftab1300\\sl192\\slmult1\\pardirnatural\\qc\\partightenfactor0\n\\f0\\b\\fs240 \\cf2 \\CocoaLigature0  }"
+                vertical_alignment: VERTICAL_ALIGNMENT_MIDDLE
+                scale_behavior: SCALE_BEHAVIOR_ADJUST_CONTAINER_HEIGHT
+                is_superscript_standardized: true
+                transformDelimiter: "  \342\200\242  "
+                chord_pro {
+                  color {
+                    red: 0.993
+                    green: 0.76
+                    blue: 0.032
+                    alpha: 1
+                  }
+                }
+              }
+            }
+            info: 3
+            text_scroller {
+              scroll_rate: 0.5
+              should_repeat: true
+              repeat_distance: 0.061728395061728392
+            }
+          }
+          element_build_order {
+            string: "1852CE17-89C2-4325-8CDF-5CF5B11CCC7F"
+          }
+          background_color {
+          }
+          size {
+            width: 1920
+            height: 1080
+          }
+          uuid {
+            string: "522359F8-9C88-4B36-AAD5-CA06F36C7D8E"
+          }
+        }
+        notes {
+        }
+        chord_chart {
+          platform: PLATFORM_MACOS
+        }
+      }
+    }
+  }
+  isEnabled: true
+}
+cues {
+  uuid {
+    string: "30F661E0-AF24-48F7-818E-AA2461F4FEFC"
+  }
+  completion_action_type: COMPLETION_ACTION_TYPE_LAST
+  hot_key {
+  }
+  actions {
+    uuid {
+      string: "D5B29F93-5B2F-4EB2-B034-8671336A713F"
+    }
+    name: "Verse 1"
+    label {
+    }
+    isEnabled: true
+    layer_identification {
+      uuid {
+        string: "slides"
+      }
+      name: "Slides"
+    }
+    type: ACTION_TYPE_PRESENTATION_SLIDE
+    slide {
+      presentation {
+        base_slide {
+          elements {
+            element {
+              uuid {
+                string: "E1E3C1A0-F172-4F0E-BE1D-9E5AB62515E4"
+              }
+              name: "Lyrics"
               bounds {
                 origin {
                   x: 150
@@ -222,7 +475,7 @@ cues {
             }
           }
           element_build_order {
-            string: "41B0FE94-5CFA-4A3B-93FB-142A7A242411"
+            string: "E1E3C1A0-F172-4F0E-BE1D-9E5AB62515E4"
           }
           background_color {
           }
@@ -231,7 +484,204 @@ cues {
             height: 1080
           }
           uuid {
-            string: "695273E8-7D54-4161-B733-9BD32AAD1A0E"
+            string: "F928717B-4EB9-4BA7-8812-AA88A67D7A49"
+          }
+        }
+        notes {
+        }
+        chord_chart {
+          platform: PLATFORM_MACOS
+        }
+      }
+    }
+  }
+  isEnabled: true
+}
+cues {
+  uuid {
+    string: "FE0E4FF5-D557-483E-81FD-0642EB4B739C"
+  }
+  completion_action_type: COMPLETION_ACTION_TYPE_LAST
+  hot_key {
+  }
+  actions {
+    uuid {
+      string: "0CAFD4EC-9CB4-44A4-A86E-6BA54F787FF6"
+    }
+    name: "Turnaround"
+    label {
+    }
+    isEnabled: true
+    layer_identification {
+      uuid {
+        string: "slides"
+      }
+      name: "Slides"
+    }
+    type: ACTION_TYPE_PRESENTATION_SLIDE
+    slide {
+      presentation {
+        base_slide {
+          elements {
+            element {
+              uuid {
+                string: "A8EEE4A8-7FD1-4399-8346-B0A71DD924A9"
+              }
+              name: "Lyrics"
+              bounds {
+                origin {
+                  x: 150
+                  y: 405.4
+                }
+                size {
+                  width: 1620
+                  height: 269.2
+                }
+              }
+              opacity: 1
+              path {
+                closed: true
+                points {
+                  point {
+                  }
+                  q0 {
+                  }
+                  q1 {
+                  }
+                }
+                points {
+                  point {
+                    x: 1
+                  }
+                  q0 {
+                    x: 1
+                  }
+                  q1 {
+                    x: 1
+                  }
+                }
+                points {
+                  point {
+                    x: 1
+                    y: 1
+                  }
+                  q0 {
+                    x: 1
+                    y: 1
+                  }
+                  q1 {
+                    x: 1
+                    y: 1
+                  }
+                }
+                points {
+                  point {
+                    y: 1
+                  }
+                  q0 {
+                    y: 1
+                  }
+                  q1 {
+                    y: 1
+                  }
+                }
+                shape {
+                  type: TYPE_RECTANGLE
+                }
+              }
+              fill {
+                color {
+                  red: 0.13
+                  green: 0.59
+                  blue: 0.95
+                  alpha: 1
+                }
+              }
+              stroke {
+                width: 3
+                color {
+                  red: 1
+                  green: 1
+                  blue: 1
+                  alpha: 1
+                }
+              }
+              shadow {
+                angle: 315
+                offset: 5
+                radius: 5
+                color {
+                  alpha: 1
+                }
+                opacity: 0.75
+              }
+              feather {
+                radius: 0.05
+              }
+              text {
+                attributes {
+                  font {
+                    name: "BebasNeueBold"
+                    size: 120
+                    bold: true
+                    family: "Bebas Neue"
+                    face: "BebasNeueBold"
+                  }
+                  capitalization: CAPITALIZATION_ALL_CAPS
+                  text_solid_fill {
+                    red: 1
+                    green: 1
+                    blue: 1
+                    alpha: 1
+                  }
+                  paragraph_style {
+                    alignment: ALIGNMENT_CENTER
+                    line_height_multiple: 0.8
+                    default_tab_interval: 65
+                  }
+                }
+                shadow {
+                  angle: 315
+                  offset: 5
+                  radius: 5
+                  color {
+                    alpha: 1
+                  }
+                  opacity: 0.75
+                }
+                rtf_data: "{\\rtf1\\ansi\\ansicpg1252\\cocoartf2822\\cocoatextscaling0\\cocoaplatform0{\\fonttbl\\f0\\fnil\\fcharset0 BebasNeueBold;}{\\colortbl;\\red255\\green255\\blue255;\\red255\\green255\\blue255;\\red0\\green0\\blue0;}{\\*\\expandedcolortbl;;\\cssrgb\\c100000\\c100000\\c100000;\\csgray\\c0;}\\deftab1300\\n\\pard\\tx0\\pardeftab1300\\sl192\\slmult1\\pardirnatural\\qc\\partightenfactor0\n\\f0\\b\\fs240 \\cf2 \\CocoaLigature0  }"
+                vertical_alignment: VERTICAL_ALIGNMENT_MIDDLE
+                scale_behavior: SCALE_BEHAVIOR_ADJUST_CONTAINER_HEIGHT
+                is_superscript_standardized: true
+                transformDelimiter: "  \342\200\242  "
+                chord_pro {
+                  color {
+                    red: 0.993
+                    green: 0.76
+                    blue: 0.032
+                    alpha: 1
+                  }
+                }
+              }
+            }
+            info: 3
+            text_scroller {
+              scroll_rate: 0.5
+              should_repeat: true
+              repeat_distance: 0.061728395061728392
+            }
+          }
+          element_build_order {
+            string: "A8EEE4A8-7FD1-4399-8346-B0A71DD924A9"
+          }
+          background_color {
+          }
+          size {
+            width: 1920
+            height: 1080
+          }
+          uuid {
+            string: "8A9CCFA0-AC92-442A-97BB-27C0F14355AF"
           }
         }
         notes {
