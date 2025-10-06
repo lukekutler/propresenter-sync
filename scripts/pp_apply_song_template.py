@@ -28,7 +28,9 @@ from __future__ import annotations
 import json
 import math
 import os
+import random
 import re
+import subprocess
 import sys
 import uuid
 import zipfile
@@ -54,6 +56,7 @@ import presentationSlide_pb2  # type: ignore
 import slide_pb2  # type: ignore
 import basicTypes_pb2  # type: ignore
 import cue_pb2  # type: ignore
+import graphicsData_pb2  # type: ignore
 
 NON_LYRIC_KEYWORDS = (
     "intro",
@@ -79,6 +82,8 @@ GROUP_COLOR_PALETTE: tuple[tuple[float, float, float, float], ...] = (
 
 BACKGROUND_LIGHTS_GROUP_NAME = "Background & Lights"
 SERVICE_TIMER_NAME = "Service Timer"
+BACKGROUND_MEDIA_DIR = Path.home() / "Documents" / "Word Of Life" / "Backgrounds"
+BACKGROUND_MEDIA_EXTENSIONS = {".mov", ".mp4", ".m4v"}
 
 
 def new_uuid() -> str:
@@ -314,6 +319,7 @@ def add_background_lights_group(
     audience_look_name: str,
     stage_layout_info: Optional[dict[str, Any]],
     timer_descriptor: Optional[dict[str, Any]],
+    background_spec: Optional[dict[str, Any]] = None,
 ) -> bool:
     group = doc.cue_groups.add()
     group_uuid = new_uuid()
@@ -359,13 +365,13 @@ def add_background_lights_group(
 
     clear_action = cue.actions.add()
     clear_action.uuid.string = new_uuid()
-    clear_action.name = 'Clear All'
+    clear_action.name = 'Clear Slide'
     clear_action.type = action_pb2.Action.ActionType.ACTION_TYPE_CLEAR
     clear_action.isEnabled = True
     clear_action.delay_time = 0.0
     clear_action.label.text = ''
     set_color(clear_action.label.color, 0.054, 0.211, 0.588, 1.0)
-    clear_action.clear.target_layer = action_pb2.Action.ClearType.ClearTargetLayer.CLEAR_TARGET_LAYER_ALL
+    clear_action.clear.target_layer = action_pb2.Action.ClearType.ClearTargetLayer.CLEAR_TARGET_LAYER_SLIDE
 
     if timer_seconds is not None and math.isfinite(timer_seconds) and timer_seconds > 0:
         timer_action = cue.actions.add()
@@ -398,6 +404,8 @@ def add_background_lights_group(
         add_audience_look_action(cue, audience_look_name)
 
     add_stage_layout_action(cue, stage_layout_info)
+
+    attach_background_media(cue, background_spec)
 
     return True
 
@@ -620,6 +628,215 @@ def write_presentation(path: str, doc: presentation_pb2.Presentation, zip_member
             fh.write(doc.SerializeToString())
 
 
+def _choose_background_file(preferred_name: Optional[str] = None) -> Optional[Path]:
+    directory = BACKGROUND_MEDIA_DIR
+    if not directory.exists() or not directory.is_dir():
+        return None
+
+    candidates = [entry for entry in directory.iterdir() if entry.is_file() and entry.suffix.lower() in BACKGROUND_MEDIA_EXTENSIONS]
+    if not candidates:
+        return None
+
+    if preferred_name:
+        for candidate in candidates:
+            if candidate.name.lower() == preferred_name.lower():
+                return candidate
+
+    return random.choice(candidates)
+
+
+def _infer_media_dimensions(path: str) -> Tuple[float, float]:
+    width: Optional[float] = None
+    height: Optional[float] = None
+    try:
+        result = subprocess.run(['sips', '-g', 'pixelWidth', '-g', 'pixelHeight', path], capture_output=True, text=True, check=False)
+        if result.returncode == 0:
+            for line in result.stdout.splitlines():
+                line = line.strip()
+                if line.lower().startswith('pixelwidth:'):
+                    try:
+                        width = float(line.split(':', 1)[1].strip())
+                    except ValueError:
+                        width = None
+                if line.lower().startswith('pixelheight:'):
+                    try:
+                        height = float(line.split(':', 1)[1].strip())
+                    except ValueError:
+                        height = None
+    except Exception:
+        width = height = None
+    if not width or not height or width <= 0 or height <= 0:
+        return 1920.0, 1080.0
+    return width, height
+
+
+def attach_background_media(cue: cue_pb2.Cue, config: Optional[dict[str, Any]]) -> None:
+    if not cue:
+        return
+
+    preferred_name: Optional[str] = None
+    explicit_path: Optional[str] = None
+    duration_value: Optional[float] = None
+    explicit_volume: Optional[float] = None
+    playback_behavior: Optional[str] = None
+    fade_in: Optional[bool] = None
+    fade_out: Optional[bool] = None
+    times_to_loop: Optional[int] = None
+    frame_rate: Optional[float] = None
+    soft_loop_duration: Optional[float] = None
+
+    if isinstance(config, dict):
+        for key in ('filePath', 'path', 'absolutePath'):
+            value = config.get(key)
+            if isinstance(value, str) and value.strip():
+                explicit_path = value.strip()
+                break
+        pref = config.get('preferredFile') or config.get('preferredName')
+        if isinstance(pref, str) and pref.strip():
+            preferred_name = pref.strip()
+        if isinstance(config.get('durationSeconds'), (int, float)):
+            duration_value = float(config['durationSeconds'])
+        elif isinstance(config.get('duration'), (int, float)):
+            duration_value = float(config['duration'])
+        if isinstance(config.get('volume'), (int, float)):
+            explicit_volume = float(config['volume'])
+        play_raw = config.get('playbackBehavior')
+        if isinstance(play_raw, str) and play_raw.strip():
+            playback_behavior = play_raw.strip().upper()
+        if isinstance(config.get('fadeIn'), bool):
+            fade_in = config['fadeIn']
+        if isinstance(config.get('fadeOut'), bool):
+            fade_out = config['fadeOut']
+        if isinstance(config.get('timesToLoop'), int):
+            times_to_loop = config['timesToLoop']
+        fr_value = config.get('frameRate') or config.get('frame_rate')
+        if isinstance(fr_value, (int, float)):
+            frame_rate = float(fr_value)
+        sl_value = config.get('softLoopDuration') or config.get('soft_loop_duration')
+        if isinstance(sl_value, (int, float)):
+            soft_loop_duration = float(sl_value)
+
+    chosen_path: Optional[Path] = None
+    if explicit_path:
+        candidate = Path(os.path.expanduser(explicit_path))
+        if candidate.exists():
+            chosen_path = candidate
+        else:
+            print(f"song_background_warning:missing_file:{candidate}", flush=True)
+
+    if chosen_path is None:
+        chosen_path = _choose_background_file(preferred_name)
+        if chosen_path is None:
+            print('song_background_warning:no_candidates', flush=True)
+            return
+
+    try:
+        absolute_path = chosen_path.resolve()
+    except Exception:
+        absolute_path = chosen_path.absolute()
+
+    documents_root = Path.home() / 'Documents'
+    documents_rel: Optional[str]
+    try:
+        documents_rel = absolute_path.relative_to(documents_root).as_posix()
+        local_root = basicTypes_pb2.URL.LocalRelativePath.Root.Value('ROOT_USER_DOCUMENTS')
+    except ValueError:
+        documents_rel = absolute_path.name
+        local_root = basicTypes_pb2.URL.LocalRelativePath.Root.Value('ROOT_USER_HOME')
+
+    action = cue.actions.add()
+    action.uuid.string = new_uuid()
+    action.name = absolute_path.stem
+    action.type = action_pb2.Action.ActionType.ACTION_TYPE_MEDIA
+    action.isEnabled = True
+    action.delay_time = 0.0
+    action.label.text = ''
+    set_color(action.label.color, 0.054, 0.211, 0.588, 1.0)
+
+    if duration_value and math.isfinite(duration_value) and duration_value > 0:
+        action.duration = float(duration_value)
+
+    media = action.media
+    media.layer_type = action_pb2.Action.MediaType.LayerType.LAYER_TYPE_BACKGROUND
+
+    element = media.element
+    element.uuid.string = new_uuid()
+
+    format_hint = absolute_path.suffix.lstrip('.')
+    if format_hint:
+        element.metadata.format = format_hint.upper()
+
+    absolute_uri = absolute_path.as_uri()
+    element.url.absolute_string = absolute_uri
+    element.url.platform = basicTypes_pb2.URL.Platform.PLATFORM_MACOS
+    element.url.local.root = local_root
+    element.url.local.path = documents_rel.replace('\\', '/') if documents_rel else absolute_path.name
+
+    width, height = _infer_media_dimensions(str(absolute_path))
+
+    video_props = element.video
+    drawing = video_props.drawing
+    drawing.scale_behavior = graphicsData_pb2.Media.DrawingProperties.ScaleBehavior.SCALE_BEHAVIOR_FILL
+    drawing.scale_alignment = graphicsData_pb2.Media.DrawingProperties.ScaleAlignment.SCALE_ALIGNMENT_MIDDLE_CENTER
+    drawing.natural_size.width = float(width)
+    drawing.natural_size.height = float(height)
+    drawing.custom_image_bounds.origin.x = 0.0
+    drawing.custom_image_bounds.origin.y = 0.0
+    drawing.custom_image_bounds.size.width = float(width)
+    drawing.custom_image_bounds.size.height = float(height)
+    drawing.crop_enable = False
+    drawing.crop_insets.top = 0.0
+    drawing.crop_insets.bottom = 0.0
+    drawing.crop_insets.left = 0.0
+    drawing.crop_insets.right = 0.0
+
+    transport = video_props.transport
+    transport.play_rate = 1.0
+    transport.should_fade_in = True if fade_in is None else bool(fade_in)
+    transport.should_fade_out = True if fade_out is None else bool(fade_out)
+    transport.times_to_loop = int(times_to_loop) if isinstance(times_to_loop, int) and times_to_loop > 0 else 1
+
+    if playback_behavior:
+        key = f'PLAYBACK_BEHAVIOR_{playback_behavior.upper()}'
+        try:
+            transport.playback_behavior = graphicsData_pb2.Media.TransportProperties.PlaybackBehavior.Value(key)
+        except ValueError:
+            transport.playback_behavior = graphicsData_pb2.Media.TransportProperties.PlaybackBehavior.PLAYBACK_BEHAVIOR_LOOP
+    else:
+        transport.playback_behavior = graphicsData_pb2.Media.TransportProperties.PlaybackBehavior.PLAYBACK_BEHAVIOR_LOOP
+
+    if duration_value and math.isfinite(duration_value) and duration_value > 0:
+        transport.end_point = float(duration_value)
+        transport.out_point = float(duration_value)
+
+    if frame_rate and math.isfinite(frame_rate) and frame_rate > 0:
+        video_props.video.frame_rate = float(frame_rate)
+    else:
+        video_props.video.frame_rate = 30.0
+
+    if soft_loop_duration and math.isfinite(soft_loop_duration) and soft_loop_duration >= 0:
+        video_props.video.soft_loop_duration = float(soft_loop_duration)
+    else:
+        video_props.video.soft_loop_duration = 0.5
+
+    volume = explicit_volume if explicit_volume is not None else 1.0
+    try:
+        video_props.audio.volume = float(volume)
+    except Exception:
+        video_props.audio.volume = 1.0
+
+    media.audio.SetInParent()
+
+    try:
+        payload = {
+            'file': absolute_path.name,
+            'path': element.url.local.path,
+            'behavior': graphicsData_pb2.Media.TransportProperties.PlaybackBehavior.Name(transport.playback_behavior),
+        }
+        print(f"song_background_media:{json.dumps(payload)}", flush=True)
+    except Exception:
+        print(f"song_background_media:{absolute_path.name}", flush=True)
+
 def rebuild_song(doc: presentation_pb2.Presentation, payload: dict[str, Any]) -> None:
     title = str(payload.get("title") or "").strip()
     arrangement_name = str(payload.get("arrangementName") or "Default").strip() or "Default"
@@ -658,6 +875,15 @@ def rebuild_song(doc: presentation_pb2.Presentation, payload: dict[str, Any]) ->
     text_color = parse_color(payload.get("textColor"), (1.0, 1.0, 1.0, 1.0))
     fill_color = parse_color(payload.get("fillColor"), (0.13, 0.59, 0.95, 1.0))
 
+    background_spec: Optional[dict[str, Any]] = None
+    raw_background = payload.get("backgroundMedia")
+    if isinstance(raw_background, dict):
+        background_spec = raw_background
+    else:
+        alt_background = payload.get("background")
+        if isinstance(alt_background, dict):
+            background_spec = alt_background
+
     arrangement_group_ids: list[str] = []
     background_added = add_background_lights_group(
         doc,
@@ -673,6 +899,7 @@ def rebuild_song(doc: presentation_pb2.Presentation, payload: dict[str, Any]) ->
         audience_look_name,
         stage_layout_info,
         timer_descriptor,
+        background_spec,
     )
 
     sections_list = [section for section in sections if isinstance(section, dict)]
