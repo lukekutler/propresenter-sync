@@ -66,6 +66,17 @@ NON_LYRIC_KEYWORDS = (
     "ending",
 )
 
+GROUP_COLOR_PALETTE: tuple[tuple[float, float, float, float], ...] = (
+    (0.05, 0.40, 0.75, 1.0),
+    (0.36, 0.65, 0.20, 1.0),
+    (0.80, 0.32, 0.15, 1.0),
+    (0.56, 0.28, 0.67, 1.0),
+    (0.92, 0.56, 0.14, 1.0),
+    (0.18, 0.55, 0.60, 1.0),
+    (0.78, 0.18, 0.50, 1.0),
+    (0.30, 0.30, 0.80, 1.0),
+)
+
 
 def new_uuid() -> str:
     return str(uuid.uuid4()).upper()
@@ -458,12 +469,14 @@ def rebuild_song(doc: presentation_pb2.Presentation, payload: dict[str, Any]) ->
     sections_by_id: defaultdict[str, list[int]] = defaultdict(list)
     labels_to_indices: defaultdict[str, list[int]] = defaultdict(list)
     base_number_to_indices: defaultdict[tuple[str, Optional[str]], list[int]] = defaultdict(list)
+    base_number_usage: defaultdict[str, set[str]] = defaultdict(set)
 
     for idx, section in enumerate(sections_list):
         section_id = str(section.get("id") or "").strip()
         normalized_labels: set[str] = set()
         base_pairs: set[tuple[str, Optional[str]]] = set()
 
+        primary_label = None
         for key_name in ("sequenceLabel", "name"):
             raw_label = section.get(key_name)
             norm = normalize_label(raw_label)
@@ -473,10 +486,21 @@ def rebuild_song(doc: presentation_pb2.Presentation, payload: dict[str, Any]) ->
             if base:
                 base_pairs.add((base, number))
                 base_pairs.add((base, None))
+                if number is not None:
+                    base_number_usage[base].add(number)
+            if primary_label is None and isinstance(raw_label, str) and raw_label.strip():
+                primary_label = raw_label.strip()
+
+        if primary_label is None:
+            if isinstance(section.get("name"), str) and section["name"].strip():
+                primary_label = str(section["name"]).strip()
+            elif isinstance(section.get("sequenceLabel"), str) and section["sequenceLabel"].strip():
+                primary_label = str(section["sequenceLabel"]).strip()
 
         record = {
             "section": section,
             "id": section_id or None,
+            "primary_label": primary_label,
         }
         section_records.append(record)
 
@@ -491,10 +515,21 @@ def rebuild_song(doc: presentation_pb2.Presentation, payload: dict[str, Any]) ->
         record["normalized_labels"] = normalized_labels
         record["base_pairs"] = base_pairs
 
+        base_label, number_label = extract_label_components(primary_label)
+        record["base_label"] = base_label if base_label else None
+        record["number_label"] = number_label
+        if base_label and number_label:
+            base_number_usage[base_label].add(number_label)
+
     sequence_entries = payload.get("sequence")
     ordered_units: list[tuple[Optional[dict[str, Any]], Optional[str], Optional[int]]] = []
     used_indices: set[int] = set()
     match_logs: list[str] = []
+
+    multi_number_bases: set[str] = set()
+    for base, numbers in base_number_usage.items():
+        if len(numbers) > 1:
+            multi_number_bases.add(base)
 
     def select_candidate(indices: Iterable[int], reason: str, *, allow_reuse: bool = False) -> tuple[Optional[int], str]:
         candidates = list(indices)
@@ -576,9 +611,19 @@ def rebuild_song(doc: presentation_pb2.Presentation, payload: dict[str, Any]) ->
             if label_text:
                 sequence_label_value = label_text
                 if entry_number:
-                    target_norm = f"{(base_key or '').strip()} {entry_number}".strip()
-                    if target_norm and normalize_label(label_text) != target_norm:
-                        sequence_label_value = f"{label_text} {entry_number}".strip()
+                    append_number = False
+                    if base_key:
+                        if base_key in multi_number_bases:
+                            append_number = True
+                        else:
+                            numbers = base_number_usage.get(base_key)
+                            append_number = bool(numbers and len(numbers) > 1)
+                    else:
+                        append_number = True
+                    if append_number:
+                        target_norm = f"{(base_key or '').strip()} {entry_number}".strip()
+                        if target_norm and normalize_label(label_text) != target_norm:
+                            sequence_label_value = f"{label_text} {entry_number}".strip()
             elif entry_number and matched_section:
                 candidate_label = matched_section.get("sequenceLabel") or matched_section.get("name")
                 if isinstance(candidate_label, str) and candidate_label.strip():
@@ -609,12 +654,24 @@ def rebuild_song(doc: presentation_pb2.Presentation, payload: dict[str, Any]) ->
             ordered_units.append((record["section"], None, idx))
 
     group_cache: dict[int, dict[str, Any]] = {}
+    created_group_count = 0
 
     for index, (section, sequence_label, section_record_idx) in enumerate(ordered_units):
         section_name_source = sequence_label or str(section.get("sequenceLabel") if section else "") or str(section.get("name") if section else "")
         section_name = section_name_source.strip() if section_name_source else ""
         if not section_name:
             section_name = f"Section {index + 1}"
+
+        record_for_section = section_records[section_record_idx] if section_record_idx is not None and 0 <= section_record_idx < len(section_records) else None
+        if record_for_section is not None:
+            base_label = record_for_section.get("base_label")
+            number_label = record_for_section.get("number_label")
+            primary_label = record_for_section.get("primary_label")
+            if base_label and number_label and base_label not in multi_number_bases and number_label.startswith("1"):
+                label_source = primary_label or section_name
+                trimmed = re.sub(r"\s*\d+$", "", label_source).strip()
+                if trimmed:
+                    section_name = trimmed
 
         section_is_non_lyric = is_non_lyric_section(section_name)
 
@@ -652,10 +709,15 @@ def rebuild_song(doc: presentation_pb2.Presentation, payload: dict[str, Any]) ->
         arrangement_group_ids.append(group_uuid)
         group.group.uuid.string = group_uuid
         group.group.name = section_name
-        set_color(group.group.color, 0.0, 0.466666669, 0.8, 1.0)
+
+        color_tuple = GROUP_COLOR_PALETTE[created_group_count % len(GROUP_COLOR_PALETTE)]
+        set_color(group.group.color, *color_tuple)
         group.group.application_group_identifier.string = new_uuid()
         group.group.application_group_name = section_name
 
+        group.group.hotKey.Clear()
+
+        created_group_count += 1
         for slide_lines in slides:
             cue = doc.cues.add()
             cue_uuid = new_uuid()
@@ -688,7 +750,9 @@ def rebuild_song(doc: presentation_pb2.Presentation, payload: dict[str, Any]) ->
             group.cue_identifiers.add().string = cue_uuid
 
         if section_record_idx is not None:
-            group_cache[section_record_idx] = {"group_uuid": group_uuid}
+            group_cache[section_record_idx] = {
+                "group_uuid": group_uuid,
+            }
 
     if arrangement_group_ids:
         arrangement = doc.arrangements.add()
