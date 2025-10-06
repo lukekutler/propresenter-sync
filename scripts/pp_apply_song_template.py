@@ -77,6 +77,9 @@ GROUP_COLOR_PALETTE: tuple[tuple[float, float, float, float], ...] = (
     (0.30, 0.30, 0.80, 1.0),
 )
 
+BACKGROUND_LIGHTS_GROUP_NAME = "Background & Lights"
+SERVICE_TIMER_NAME = "Service Timer"
+
 
 def new_uuid() -> str:
     return str(uuid.uuid4()).upper()
@@ -209,6 +212,194 @@ def describe_section(section: Optional[dict[str, Any]]) -> str:
             return value.strip()
     identifier = section.get("id")
     return str(identifier).strip() if identifier else "(unnamed)"
+
+
+def parse_timer_seconds(value: Any) -> Optional[float]:
+    if isinstance(value, (int, float)):
+        try:
+            result = float(value)
+        except (TypeError, ValueError):
+            return None
+        if math.isfinite(result) and result > 0:
+            return result
+        return None
+    if isinstance(value, str):
+        try:
+            parsed = float(value.strip())
+        except (TypeError, ValueError):
+            return None
+        if math.isfinite(parsed) and parsed > 0:
+            return parsed
+    return None
+
+
+def parse_timer_descriptor(value: Any) -> Optional[dict[str, Any]]:
+    if not isinstance(value, dict):
+        return None
+    name = value.get('name')
+    uuid_value = value.get('uuid')
+    allows = value.get('allowsOverrun')
+    parsed: dict[str, Any] = {}
+    if isinstance(name, str) and name.strip():
+        parsed['name'] = name.strip()
+    if isinstance(uuid_value, str) and uuid_value.strip():
+        parsed['uuid'] = uuid_value.strip()
+    if isinstance(allows, bool):
+        parsed['allowsOverrun'] = allows
+    return parsed if parsed else None
+
+
+def add_audience_look_action(cue: cue_pb2.Cue, look_name: str) -> None:
+    look_name = look_name.strip()
+    if not look_name:
+        return
+
+    action = cue.actions.add()
+    action.uuid.string = new_uuid()
+    action.name = f"Audience Look • {look_name}"
+    action.type = action_pb2.Action.ActionType.ACTION_TYPE_AUDIENCE_LOOK
+    action.isEnabled = True
+    action.delay_time = 0.0
+    action.label.text = ''
+    set_color(action.label.color, 0.054, 0.211, 0.588, 1.0)
+    action.audience_look.identification.parameter_name = look_name
+
+
+def add_stage_layout_action(cue: cue_pb2.Cue, layout_info: Optional[dict[str, Any]]) -> None:
+    if not layout_info:
+        return
+
+    layout_name = str(layout_info.get('layoutName') or '').strip()
+    layout_uuid = str(layout_info.get('layoutUuid') or '').strip()
+    assignments_data = layout_info.get('assignments')
+    if not isinstance(assignments_data, list) or not assignments_data:
+        return
+
+    action = cue.actions.add()
+    action.uuid.string = new_uuid()
+    action.name = layout_name or 'Stage Layout'
+    action.type = action_pb2.Action.ActionType.ACTION_TYPE_STAGE_LAYOUT
+    action.isEnabled = True
+    action.delay_time = 0.0
+    action.label.text = ''
+    set_color(action.label.color, 0.054, 0.211, 0.588, 1.0)
+
+    for entry in assignments_data:
+        if not isinstance(entry, dict):
+            continue
+        screen_uuid = str(entry.get('uuid') or entry.get('screenUuid') or '').strip()
+        screen_name = str(entry.get('name') or entry.get('screenName') or '').strip()
+        assignment = action.stage.stage_screen_assignments.add()
+        if screen_uuid:
+            assignment.screen.parameter_uuid.string = screen_uuid
+        if screen_name:
+            assignment.screen.parameter_name = screen_name
+        if layout_uuid:
+            assignment.layout.parameter_uuid.string = layout_uuid
+        if layout_name:
+            assignment.layout.parameter_name = layout_name
+
+
+def add_background_lights_group(
+    doc: presentation_pb2.Presentation,
+    arrangement_group_ids: list[str],
+    font_face: str,
+    font_family: str,
+    font_size: int,
+    font_bold: bool,
+    all_caps: bool,
+    text_color: tuple[float, float, float, float],
+    fill_color: tuple[float, float, float, float],
+    timer_seconds: Optional[float],
+    audience_look_name: str,
+    stage_layout_info: Optional[dict[str, Any]],
+    timer_descriptor: Optional[dict[str, Any]],
+) -> bool:
+    group = doc.cue_groups.add()
+    group_uuid = new_uuid()
+    arrangement_group_ids.append(group_uuid)
+    group.group.uuid.string = group_uuid
+    group.group.name = BACKGROUND_LIGHTS_GROUP_NAME
+    palette_color = GROUP_COLOR_PALETTE[0]
+    set_color(group.group.color, *palette_color)
+    group.group.application_group_identifier.string = new_uuid()
+    group.group.application_group_name = BACKGROUND_LIGHTS_GROUP_NAME
+    group.group.hotKey.Clear()
+
+    cue = doc.cues.add()
+    cue_uuid = new_uuid()
+    cue.uuid.string = cue_uuid
+    cue.isEnabled = True
+    cue.completion_action_type = cue_pb2.Cue.CompletionActionType.Value('COMPLETION_ACTION_TYPE_LAST')
+    cue.hot_key.Clear()
+
+    slide_action = cue.actions.add()
+    slide_action.uuid.string = new_uuid()
+    slide_action.type = action_pb2.Action.ActionType.ACTION_TYPE_PRESENTATION_SLIDE
+    slide_action.isEnabled = True
+    slide_action.delay_time = 0.0
+    slide_action.name = BACKGROUND_LIGHTS_GROUP_NAME
+    slide_action.label.Clear()
+    slide_action.layer_identification.uuid.string = "slides"
+    slide_action.layer_identification.name = "Slides"
+
+    presentation_slide = build_lyric_slide(
+        [],
+        font=font_face,
+        font_family=font_family,
+        font_size=font_size,
+        font_bold=font_bold,
+        all_caps=all_caps,
+        text_color=text_color,
+        fill_color=fill_color,
+    )
+    slide_action.slide.presentation.CopyFrom(presentation_slide)
+
+    group.cue_identifiers.add().string = cue_uuid
+
+    clear_action = cue.actions.add()
+    clear_action.uuid.string = new_uuid()
+    clear_action.name = 'Clear All'
+    clear_action.type = action_pb2.Action.ActionType.ACTION_TYPE_CLEAR
+    clear_action.isEnabled = True
+    clear_action.delay_time = 0.0
+    clear_action.label.text = ''
+    set_color(clear_action.label.color, 0.054, 0.211, 0.588, 1.0)
+    clear_action.clear.target_layer = action_pb2.Action.ClearType.ClearTargetLayer.CLEAR_TARGET_LAYER_ALL
+
+    if timer_seconds is not None and math.isfinite(timer_seconds) and timer_seconds > 0:
+        timer_action = cue.actions.add()
+        timer_action.uuid.string = new_uuid()
+        descriptor_name = str(timer_descriptor.get('name')) if timer_descriptor else ''
+        timer_name = descriptor_name.strip() or SERVICE_TIMER_NAME
+        timer_action.name = timer_name
+        timer_action.type = action_pb2.Action.ActionType.ACTION_TYPE_TIMER
+        timer_action.isEnabled = True
+        timer_action.delay_time = 0.0
+        timer_action.label.text = ''
+        set_color(timer_action.label.color, 0.054, 0.211, 0.588, 1.0)
+        timer_action.timer.action_type = action_pb2.Action.TimerType.TimerAction.ACTION_RESET_AND_START
+        timer_action.timer.timer_identification.parameter_name = timer_name
+        timer_uuid = ''
+        if timer_descriptor and isinstance(timer_descriptor.get('uuid'), str):
+            timer_uuid = timer_descriptor['uuid'].strip()
+        if timer_uuid:
+            timer_action.timer.timer_identification.parameter_uuid.string = timer_uuid
+        else:
+            timer_action.timer.timer_identification.parameter_uuid.string = new_uuid()
+        timer_cfg = timer_action.timer.timer_configuration
+        timer_cfg.Clear()
+        allows_override = timer_descriptor.get('allowsOverrun') if isinstance(timer_descriptor, dict) else None
+        timer_cfg.allows_overrun = bool(allows_override) if isinstance(allows_override, bool) else False
+        timer_cfg.countdown.duration = float(timer_seconds)
+        timer_cfg.countdown.SetInParent()
+
+    if audience_look_name.strip():
+        add_audience_look_action(cue, audience_look_name)
+
+    add_stage_layout_action(cue, stage_layout_info)
+
+    return True
 
 
 def rtf_escape(text: str) -> str:
@@ -433,6 +624,11 @@ def rebuild_song(doc: presentation_pb2.Presentation, payload: dict[str, Any]) ->
     title = str(payload.get("title") or "").strip()
     arrangement_name = str(payload.get("arrangementName") or "Default").strip() or "Default"
     sections = payload.get("sections") or []
+    timer_seconds = parse_timer_seconds(payload.get("timerSeconds"))
+    audience_look_name = str(payload.get("audienceLookName") or "").strip()
+    stage_layout_raw = payload.get("stageLayout")
+    stage_layout_info = stage_layout_raw if isinstance(stage_layout_raw, dict) else None
+    timer_descriptor = parse_timer_descriptor(payload.get("timerDescriptor"))
 
     doc.application_info.platform = basicTypes_pb2.ApplicationInfo.Platform.Value('PLATFORM_MACOS')
     doc.application_info.platform_version.major_version = 15
@@ -463,6 +659,21 @@ def rebuild_song(doc: presentation_pb2.Presentation, payload: dict[str, Any]) ->
     fill_color = parse_color(payload.get("fillColor"), (0.13, 0.59, 0.95, 1.0))
 
     arrangement_group_ids: list[str] = []
+    background_added = add_background_lights_group(
+        doc,
+        arrangement_group_ids,
+        font_face,
+        font_family,
+        font_size,
+        font_bold,
+        all_caps,
+        text_color,
+        fill_color,
+        timer_seconds,
+        audience_look_name,
+        stage_layout_info,
+        timer_descriptor,
+    )
 
     sections_list = [section for section in sections if isinstance(section, dict)]
     section_records: list[dict[str, Any]] = []
@@ -654,7 +865,7 @@ def rebuild_song(doc: presentation_pb2.Presentation, payload: dict[str, Any]) ->
             ordered_units.append((record["section"], None, idx))
 
     group_cache: dict[int, dict[str, Any]] = {}
-    created_group_count = 0
+    created_group_count = 1 if background_added else 0
 
     for index, (section, sequence_label, section_record_idx) in enumerate(ordered_units):
         section_name_source = sequence_label or str(section.get("sequenceLabel") if section else "") or str(section.get("name") if section else "")

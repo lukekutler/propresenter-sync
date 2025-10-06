@@ -229,6 +229,10 @@ type SongTemplatePayload = {
     position?: number;
     sectionId?: string;
   }[];
+  timerSeconds?: number;
+  audienceLookName?: string;
+  stageLayout?: StageLayoutDescriptor;
+  timerDescriptor?: TimerDescriptor;
 };
 
 const NON_LYRIC_SECTION_PATTERN = /\b(intro|turn\s*around|turnaround|instrumental|interlude|outro|tag|ending)\b/i;
@@ -2236,6 +2240,13 @@ async function runPresentationSync(payload: PresentationSyncPayload) {
       broadcastLog(`[INFO] Stage layout set to ${stageLayout.layoutName ?? 'Notes'}.`);
     }
 
+    const songAudienceLookName = (process.env.PROSYNC_SONG_AUDIENCE_LOOK_NAME || 'Split').trim() || 'Split';
+    const songStageLayoutName = (process.env.PROSYNC_SONG_STAGE_LAYOUT_NAME || 'Lyrics').trim() || 'Lyrics';
+    const lyricsStageLayout = await ensureStageLayout(host, port, songStageLayoutName);
+    if (!lyricsStageLayout) {
+      broadcastLog(`[WARN] Stage layout "${songStageLayoutName}" not found; song background cues will skip stage layout action.`);
+    }
+
     broadcastLog(`[INFO] Indexing ProPresenter library at ${libraryRoot}…`);
     const indexRes = await indexPresentationsUuid(libraryRoot);
     if (!indexRes.ok || !indexRes.map) {
@@ -2417,12 +2428,20 @@ async function runPresentationSync(payload: PresentationSyncPayload) {
                 })
                 .filter((node): node is NonNullable<typeof node> => Boolean(node))
             : undefined;
+          const timerSeconds = typeof item.lengthSeconds === 'number' && Number.isFinite(item.lengthSeconds)
+            ? item.lengthSeconds
+            : undefined;
+
           const songPayload: SongTemplatePayload = {
             title,
             groupName: typeof songDetails?.groupName === 'string' ? songDetails.groupName : 'Lyrics',
             arrangementName: typeof songDetails?.arrangementName === 'string' ? songDetails.arrangementName : 'Default',
             sections: sectionsPayload,
             sequence: sequencePayload,
+            timerSeconds,
+            audienceLookName: songAudienceLookName,
+            stageLayout: lyricsStageLayout ?? undefined,
+            timerDescriptor: transitionTimer ?? undefined,
           };
             try {
               const songRes = await applySongTemplate(hit.path, songPayload);
