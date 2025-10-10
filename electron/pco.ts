@@ -32,6 +32,7 @@ export type PCOPlanItemSongDetails = {
   sequenceSummary?: string;
   sections?: PCOSongArrangementSection[];
   sequence?: PCOSongArrangementSequenceEntry[];
+  bpm?: number;
 };
 
 export type PCOPlanItem = {
@@ -50,8 +51,9 @@ export type PCOPlan = { id: string; date: string; title: string; items: PCOPlanI
 
 const SERVICE = 'prosync-pco';
 const ACCOUNT = 'default';
-const MAX_LYRIC_LINE_LENGTH = 48;
+const MAX_LYRIC_LINE_LENGTH = 28;
 const PUNCT_REMOVE_REGEX = /[\p{P}\p{S}]/gu;
+const songBpmCache = new Map<string, number | null>();
 
 export async function saveCredentials(creds: PCOCredentials) {
   const payload = JSON.stringify(creds);
@@ -209,6 +211,41 @@ function normalizeLyricBlock(input: string): string {
   return expanded.join('\n');
 }
 
+function parseBpmValue(value: unknown): number | undefined {
+  if (typeof value === 'number') {
+    if (Number.isFinite(value) && value > 0) return value;
+    return undefined;
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return undefined;
+    const parsed = Number.parseFloat(trimmed);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return undefined;
+}
+
+function extractBpmFromAttributes(attrs: unknown): number | undefined {
+  if (!attrs || typeof attrs !== 'object') return undefined;
+  const source = attrs as Record<string, unknown>;
+  const candidates = [
+    source.bpm,
+    (source as any).beats_per_minute,
+    (source as any).beatsPerMinute,
+    source.tempo,
+    (source as any).tempo_bpm,
+    (source as any).tempoBpm,
+    (source as any).metronome_bpm,
+    (source as any).metronomeBpm,
+    source.metronome,
+  ];
+  for (const candidate of candidates) {
+    const parsed = parseBpmValue(candidate);
+    if (parsed !== undefined) return parsed;
+  }
+  return undefined;
+}
+
 const ROMAN_NUMERAL_VALUES: Record<string, number> = {
   i: 1,
   ii: 2,
@@ -251,23 +288,9 @@ function normalizeSequenceNumber(value: unknown): string | undefined {
   return undefined;
 }
 
-function splitLyricLine(line: string, maxLength = MAX_LYRIC_LINE_LENGTH): string[] {
-  const segments: string[] = [];
-  let remaining = line.trim();
-  while (remaining.length > maxLength) {
-    let breakIdx = remaining.lastIndexOf(' ', maxLength);
-    if (breakIdx <= 0) {
-      breakIdx = remaining.indexOf(' ', maxLength);
-    }
-    if (breakIdx <= 0) {
-      break;
-    }
-    const head = remaining.slice(0, breakIdx).trim();
-    if (head) segments.push(head);
-    remaining = remaining.slice(breakIdx).trim();
-  }
-  if (remaining.length) segments.push(remaining);
-  return segments.length ? segments : [line.trim()];
+function splitLyricLine(line: string): string[] {
+  const trimmed = line.trim().replace(/\s+/g, ' ');
+  return trimmed ? [trimmed] : [];
 }
 
 function sanitizeLyric(value: string): string {
@@ -277,36 +300,70 @@ function sanitizeLyric(value: string): string {
     .trim();
 }
 
+function splitLineIntoPair(line: string): [string, string] {
+  const normalized = line.trim().replace(/\s+/g, ' ');
+  if (!normalized) return ['', ''];
+  if (normalized.length <= MAX_LYRIC_LINE_LENGTH) return [normalized, normalized];
+
+  let breakIdx = normalized.lastIndexOf(' ', Math.min(MAX_LYRIC_LINE_LENGTH, Math.floor(normalized.length / 2)));
+  if (breakIdx <= 0) {
+    breakIdx = normalized.indexOf(' ', Math.floor(normalized.length / 2));
+  }
+  if (breakIdx <= 0 || breakIdx >= normalized.length - 1) {
+    const pivot = Math.min(normalized.length - 1, Math.max(1, Math.floor(normalized.length / 2)));
+    const head = normalized.slice(0, pivot).trim();
+    const tail = normalized.slice(pivot).trim();
+    return [head || normalized, tail || head || normalized];
+  }
+
+  const head = normalized.slice(0, breakIdx).trim();
+  const tail = normalized.slice(breakIdx).trim();
+  if (!head || !tail) {
+    const pivot = Math.min(normalized.length - 1, Math.max(1, Math.floor(normalized.length / 2)));
+    const fallbackHead = normalized.slice(0, pivot).trim();
+    const fallbackTail = normalized.slice(pivot).trim();
+    return [fallbackHead || normalized, fallbackTail || fallbackHead || normalized];
+  }
+  return [head, tail];
+}
+
 function buildLyricSlides(lines: string[]): { lines: string[]; slides: string[][] } {
   const expanded: string[] = [];
   const slides: string[][] = [];
-  let current: string[] = [];
+  let stanza: string[] = [];
 
-  const flush = () => {
-    if (current.length) {
-      slides.push(current);
-      current = [];
+  const flushStanza = () => {
+    if (!stanza.length) return;
+    while (stanza.length) {
+      const first = stanza.shift() as string;
+      const second = stanza.shift();
+      if (second) {
+        slides.push([first, second]);
+        expanded.push(first, second);
+        continue;
+      }
+      const [a, b] = splitLineIntoPair(first);
+      slides.push([a, b]);
+      expanded.push(a, b);
     }
+    stanza = [];
   };
 
   for (const raw of lines) {
     const trimmed = raw.trim();
     if (!trimmed.length) {
-      flush();
+      flushStanza();
       continue;
     }
     const parts = splitLyricLine(trimmed);
     for (const part of parts) {
       const segment = part.trim();
       if (!segment.length) continue;
-      expanded.push(segment);
-      if (current.length === 2) flush();
-      current.push(segment);
-      if (current.length === 2) flush();
+      stanza.push(segment);
     }
   }
 
-  flush();
+  flushStanza();
   return { lines: expanded, slides };
 }
 
@@ -517,6 +574,8 @@ async function fetchSongArrangementDetails(params: {
   const arrangementResp = await httpsGetJson(`${basePath}`, headers);
   if (arrangementResp.status >= 200 && arrangementResp.status < 300 && arrangementResp.json?.data) {
     const attrs = arrangementResp.json.data.attributes || {};
+    const bpmFromAttrs = extractBpmFromAttributes(attrs);
+    if (bpmFromAttrs !== undefined) details.bpm = bpmFromAttrs;
     if (typeof attrs.name === 'string' && attrs.name.trim()) details.arrangementName = attrs.name.trim();
     if (typeof attrs.sequence_short === 'string' && attrs.sequence_short.trim()) {
       details.sequenceSummary = attrs.sequence_short.trim();
@@ -604,6 +663,16 @@ async function fetchSongArrangementDetails(params: {
     if (fallback) details.sequence = fallback;
   }
 
+  if (details.bpm === undefined && Array.isArray(arrangementResp.json?.included)) {
+    for (const node of arrangementResp.json.included) {
+      const candidate = extractBpmFromAttributes(node?.attributes);
+      if (candidate !== undefined) {
+        details.bpm = candidate;
+        break;
+      }
+    }
+  }
+
   if (!details.sections || !details.sections.length) {
     const includeResp = await httpsGetJson(`${basePath}?include=sections.section_items,sections.items`, headers);
     if (includeResp.status >= 200 && includeResp.status < 300) {
@@ -617,6 +686,24 @@ async function fetchSongArrangementDetails(params: {
         }
       }
       if (sections?.length) details.sections = sections;
+    }
+  }
+
+  if (details.bpm === undefined) {
+    if (songBpmCache.has(songId)) {
+      const cached = songBpmCache.get(songId);
+      if (cached !== null && cached !== undefined) {
+        details.bpm = cached;
+      }
+    } else {
+      const songResp = await httpsGetJson(`/services/v2/songs/${encodeURIComponent(songId)}`, headers);
+      if (songResp.status >= 200 && songResp.status < 300 && songResp.json?.data?.attributes) {
+        const songBpm = extractBpmFromAttributes(songResp.json.data.attributes);
+        songBpmCache.set(songId, songBpm ?? null);
+        if (songBpm !== undefined) details.bpm = songBpm;
+      } else {
+        songBpmCache.set(songId, null);
+      }
     }
   }
 
@@ -851,6 +938,7 @@ export async function getNextPlan(): Promise<{ ok: boolean; plan?: PCOPlan; erro
       sequenceSummary: fetched.sequenceSummary ?? details.sequenceSummary,
       sections: fetched.sections ?? details.sections,
       sequence: fetched.sequence ?? details.sequence,
+      bpm: fetched.bpm ?? details.bpm,
     };
   }
 

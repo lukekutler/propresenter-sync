@@ -84,6 +84,172 @@ function broadcastLog(line: string) {
   }
 }
 
+const BACKGROUND_MEDIA_EXTENSIONS = new Set(['.mov', '.mp4', '.m4v']);
+const WARM_COLOR_KEYWORDS = ['warm', 'white', 'red', 'pink', 'orange', 'amber', 'gold'];
+const COOL_COLOR_KEYWORDS = ['cool', 'blue', 'purple', 'violet', 'green', 'teal', 'cyan', 'aqua', 'indigo'];
+
+function expandUserPath(input: string): string {
+  if (!input) return input;
+  if (input.startsWith('~')) {
+    return path.join(os.homedir(), input.slice(1));
+  }
+  return input;
+}
+
+function getFastSongBpmThreshold(): number {
+  const raw = (process.env.PROSYNC_FAST_SONG_BPM || process.env.PROSYNC_FAST_BPM_THRESHOLD || '').trim();
+  const parsed = Number.parseFloat(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 100;
+}
+
+function resolveBackgroundRootDir(): string | null {
+  const envCandidates = [
+    process.env.PROSYNC_BACKGROUNDS_DIR,
+    process.env.PROSYNC_BACKGROUND_ROOT,
+    process.env.PROSYNC_BACKGROUND_DIR,
+    process.env.BACKGROUND_MEDIA_DIR,
+    process.env.BACKGROUND_ROOT,
+  ];
+
+  for (const candidate of envCandidates) {
+    if (!candidate || !candidate.trim()) continue;
+    const expanded = expandUserPath(candidate.trim());
+    const resolved = path.resolve(expanded);
+    if (fs.existsSync(resolved) && fs.statSync(resolved).isDirectory()) {
+      return resolved;
+    }
+    return resolved;
+  }
+
+  const fallback = path.join(os.homedir(), 'Documents', 'Word Of Life', 'Backgrounds');
+  if (fs.existsSync(fallback) && fs.statSync(fallback).isDirectory()) {
+    return fallback;
+  }
+  return null;
+}
+
+function listSubdirectories(root: string): string[] {
+  try {
+    const entries = fs.readdirSync(root, { withFileTypes: true });
+    return entries
+      .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
+      .map((entry) => path.join(root, entry.name));
+  } catch {
+    return [];
+  }
+}
+
+function gatherBackgroundFiles(folder: string): string[] {
+  try {
+    const entries = fs.readdirSync(folder, { withFileTypes: true });
+    return entries
+      .filter((entry) => entry.isFile() && BACKGROUND_MEDIA_EXTENSIONS.has(path.extname(entry.name).toLowerCase()))
+      .map((entry) => path.join(folder, entry.name));
+  } catch {
+    return [];
+  }
+}
+
+function detectColorFamilies(filePath: string): Set<'warm' | 'cool'> {
+  const name = path.basename(filePath).toLowerCase();
+  const families = new Set<'warm' | 'cool'>();
+  for (const token of WARM_COLOR_KEYWORDS) {
+    if (name.includes(token)) {
+      families.add('warm');
+      break;
+    }
+  }
+  for (const token of COOL_COLOR_KEYWORDS) {
+    if (name.includes(token)) {
+      families.add('cool');
+      break;
+    }
+  }
+  return families;
+}
+
+function pickRandom<T>(items: T[]): T | undefined {
+  if (!items.length) return undefined;
+  const idx = Math.floor(Math.random() * items.length);
+  return items[idx];
+}
+
+function createBackgroundSelector(): BackgroundSelector | null {
+  const root = resolveBackgroundRootDir();
+  if (!root) {
+    broadcastLog('[WARN] Background root directory not configured; skipping background assignment.');
+    return null;
+  }
+
+  let chosenFolder = root;
+  const subdirs = listSubdirectories(root);
+  if (subdirs.length) {
+    const picked = pickRandom(subdirs);
+    if (picked) chosenFolder = picked;
+  }
+
+  let files = gatherBackgroundFiles(chosenFolder);
+  if (!files.length && chosenFolder !== root) {
+    files = gatherBackgroundFiles(root);
+  }
+  if (!files.length) {
+    broadcastLog(`[WARN] No background media found in "${chosenFolder}".`);
+    return null;
+  }
+
+  const warmFiles: string[] = [];
+  const coolFiles: string[] = [];
+  const neutralFiles: string[] = [];
+
+  for (const file of files) {
+    const families = detectColorFamilies(file);
+    if (families.has('warm')) warmFiles.push(file);
+    if (families.has('cool')) coolFiles.push(file);
+    if (!families.size) neutralFiles.push(file);
+  }
+
+  const relativeFolder = path.relative(root, chosenFolder) || path.basename(chosenFolder) || chosenFolder;
+  broadcastLog(`[INFO] Background pack selected • ${relativeFolder}`);
+
+  const threshold = getFastSongBpmThreshold();
+
+  return {
+    folder: chosenFolder,
+    pickForSong: ({ bpm, title }) => {
+      const hasBpm = typeof bpm === 'number' && Number.isFinite(bpm);
+      const isFast = hasBpm ? bpm! >= threshold : undefined;
+      let pool: string[] = [];
+      let familyLabel: 'warm' | 'cool' | 'any' = 'any';
+
+      if (isFast === true) {
+        pool = warmFiles.length ? warmFiles : (coolFiles.length ? coolFiles : files);
+        familyLabel = warmFiles.length ? 'warm' : coolFiles.length ? 'cool' : 'any';
+      } else if (isFast === false) {
+        pool = coolFiles.length ? coolFiles : (warmFiles.length ? warmFiles : files);
+        familyLabel = coolFiles.length ? 'cool' : warmFiles.length ? 'warm' : 'any';
+      } else {
+        pool = warmFiles.length || coolFiles.length ? [...warmFiles, ...coolFiles] : files;
+        if (!pool.length) pool = files;
+      }
+
+      if (!pool.length) {
+        return undefined;
+      }
+
+      const pickedFile = pickRandom(pool);
+      if (!pickedFile) {
+        return undefined;
+      }
+
+      const relPath = path.relative(root, pickedFile) || path.basename(pickedFile);
+      const bpmInfo = hasBpm ? `${Math.round(bpm!)} BPM` : 'BPM unknown';
+      broadcastLog(`[INFO] Song background chosen • ${title} → ${relPath} (${familyLabel}, ${bpmInfo})`);
+
+      return { filePath: pickedFile };
+    },
+  };
+}
+
 function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -215,6 +381,19 @@ type SongTemplateSectionPayload = {
   sequenceLabel?: string;
   slides: string[][];
 };
+type SongBackgroundSpec = {
+  filePath?: string;
+  path?: string;
+  absolutePath?: string;
+  preferredFile?: string;
+  preferredName?: string;
+  playbackBehavior?: string;
+  durationSeconds?: number;
+  fadeIn?: boolean;
+  fadeOut?: boolean;
+  volume?: number;
+  timesToLoop?: number;
+};
 type SongTemplatePayload = {
   title?: string;
   groupName?: string;
@@ -238,6 +417,11 @@ type SongTemplatePayload = {
   audienceLookName?: string;
   stageLayout?: StageLayoutDescriptor;
   timerDescriptor?: TimerDescriptor;
+  backgroundMedia?: SongBackgroundSpec;
+};
+type BackgroundSelector = {
+  folder: string;
+  pickForSong: (info: { bpm?: number; title: string }) => SongBackgroundSpec | undefined;
 };
 
 const NON_LYRIC_SECTION_PATTERN = /\b(intro|turn\s*around|turnaround|instrumental|interlude|outro|tag|ending)\b/i;
@@ -2213,6 +2397,8 @@ async function runPresentationSync(payload: PresentationSyncPayload) {
     broadcastLog('[INFO] Matching plan items to ProPresenter presentations…');
     const matches = await matchPresentations({ host, port, titles });
 
+    const backgroundSelector = createBackgroundSelector();
+
     const desiredTimerName = getDesiredTimerName();
     const envTimer = resolveTransitionTimerFromEnv();
     let transitionTimer: TimerDescriptor | undefined;
@@ -2437,6 +2623,11 @@ async function runPresentationSync(payload: PresentationSyncPayload) {
             ? item.lengthSeconds
             : undefined;
 
+          const bpm = typeof item.songDetails?.bpm === 'number' && Number.isFinite(item.songDetails.bpm)
+            ? item.songDetails.bpm
+            : undefined;
+          const backgroundMedia = backgroundSelector?.pickForSong({ bpm, title });
+
           const songPayload: SongTemplatePayload = {
             title,
             groupName: typeof songDetails?.groupName === 'string' ? songDetails.groupName : 'Lyrics',
@@ -2448,6 +2639,9 @@ async function runPresentationSync(payload: PresentationSyncPayload) {
             stageLayout: lyricsStageLayout ?? undefined,
             timerDescriptor: transitionTimer ?? undefined,
           };
+          if (backgroundMedia) {
+            songPayload.backgroundMedia = backgroundMedia;
+          }
             try {
               const songRes = await applySongTemplate(hit.path, songPayload);
               if (!songRes.ok) {

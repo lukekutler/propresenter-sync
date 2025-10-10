@@ -82,8 +82,23 @@ GROUP_COLOR_PALETTE: tuple[tuple[float, float, float, float], ...] = (
 
 BACKGROUND_LIGHTS_GROUP_NAME = "Background & Lights"
 SERVICE_TIMER_NAME = "Service Timer"
-BACKGROUND_MEDIA_DIR = Path.home() / "Documents" / "Word Of Life" / "Backgrounds"
+def _resolve_background_root() -> Path:
+    env = (
+        os.environ.get("PROSYNC_BACKGROUNDS_DIR")
+        or os.environ.get("PROSYNC_BACKGROUND_ROOT")
+        or os.environ.get("PROSYNC_BACKGROUND_DIR")
+        or os.environ.get("BACKGROUND_MEDIA_DIR")
+        or os.environ.get("BACKGROUND_ROOT")
+    )
+    if env:
+        expanded = os.path.expanduser(env.strip())
+        if expanded:
+            return Path(expanded)
+    return Path.home() / "Documents" / "Word Of Life" / "Backgrounds"
+
+BACKGROUND_MEDIA_DIR = _resolve_background_root()
 BACKGROUND_MEDIA_EXTENSIONS = {".mov", ".mp4", ".m4v"}
+BACKGROUND_SELECTED_SUBDIR: Optional[Path] = None
 
 
 def new_uuid() -> str:
@@ -363,15 +378,15 @@ def add_background_lights_group(
 
     group.cue_identifiers.add().string = cue_uuid
 
-    clear_action = cue.actions.add()
-    clear_action.uuid.string = new_uuid()
-    clear_action.name = 'Clear Slide'
-    clear_action.type = action_pb2.Action.ActionType.ACTION_TYPE_CLEAR
-    clear_action.isEnabled = True
-    clear_action.delay_time = 0.0
-    clear_action.label.text = ''
-    set_color(clear_action.label.color, 0.054, 0.211, 0.588, 1.0)
-    clear_action.clear.target_layer = action_pb2.Action.ClearType.ClearTargetLayer.CLEAR_TARGET_LAYER_SLIDE
+    clear_props_action = cue.actions.add()
+    clear_props_action.uuid.string = new_uuid()
+    clear_props_action.name = 'Clear Props'
+    clear_props_action.type = action_pb2.Action.ActionType.ACTION_TYPE_CLEAR
+    clear_props_action.isEnabled = True
+    clear_props_action.delay_time = 0.1
+    clear_props_action.label.text = ''
+    set_color(clear_props_action.label.color, 0.054, 0.211, 0.588, 1.0)
+    clear_props_action.clear.target_layer = action_pb2.Action.ClearType.ClearTargetLayer.CLEAR_TARGET_LAYER_PROP
 
     if timer_seconds is not None and math.isfinite(timer_seconds) and timer_seconds > 0:
         timer_action = cue.actions.add()
@@ -628,19 +643,60 @@ def write_presentation(path: str, doc: presentation_pb2.Presentation, zip_member
             fh.write(doc.SerializeToString())
 
 
+def _collect_background_files(folder: Path) -> list[Path]:
+    try:
+        return [
+            entry
+            for entry in folder.iterdir()
+            if entry.is_file() and entry.suffix.lower() in BACKGROUND_MEDIA_EXTENSIONS
+        ]
+    except Exception:
+        return []
+
+
 def _choose_background_file(preferred_name: Optional[str] = None) -> Optional[Path]:
     directory = BACKGROUND_MEDIA_DIR
     if not directory.exists() or not directory.is_dir():
         return None
 
-    candidates = [entry for entry in directory.iterdir() if entry.is_file() and entry.suffix.lower() in BACKGROUND_MEDIA_EXTENSIONS]
-    if not candidates:
-        return None
+    global BACKGROUND_SELECTED_SUBDIR
+    target_dir = directory
+    if BACKGROUND_SELECTED_SUBDIR is None:
+        subdirs = [
+            entry for entry in directory.iterdir()
+            if entry.is_dir() and not entry.name.startswith(".")
+        ]
+        if subdirs:
+            BACKGROUND_SELECTED_SUBDIR = random.choice(subdirs)
+        else:
+            BACKGROUND_SELECTED_SUBDIR = directory
+
+    if BACKGROUND_SELECTED_SUBDIR and BACKGROUND_SELECTED_SUBDIR.exists():
+        target_dir = BACKGROUND_SELECTED_SUBDIR
+
+    candidates = _collect_background_files(target_dir)
 
     if preferred_name:
+        lowered = preferred_name.lower()
         for candidate in candidates:
-            if candidate.name.lower() == preferred_name.lower():
+            if candidate.name.lower() == lowered:
                 return candidate
+        if target_dir != directory:
+            root_candidates = _collect_background_files(directory)
+            for candidate in root_candidates:
+                if candidate.name.lower() == lowered:
+                    return candidate
+            for subdir in directory.iterdir():
+                if not subdir.is_dir() or subdir == target_dir:
+                    continue
+                for candidate in _collect_background_files(subdir):
+                    if candidate.name.lower() == lowered:
+                        return candidate
+
+    if not candidates:
+        candidates = _collect_background_files(directory)
+        if not candidates:
+            return None
 
     return random.choice(candidates)
 
