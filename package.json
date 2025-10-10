@@ -5,9 +5,9 @@
   "type": "module",
   "description": "Desktop utility to sync plans/media into ProPresenter and automate Sunday workflows.",
   "author": "",
-  "main": "dist-electron/main.js",
+  "main": "dist-electron/main.cjs",
   "engines": {
-    "node": ">=20.19.0"
+    "node": ">=20.4.0"
   },
   "volta": {
     "node": "22.12.0",
@@ -15,7 +15,7 @@
   },
   "scripts": {
     "dev:renderer": "vite",
-    "dev:electron": "cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .",
+    "dev:electron": "env -u ELECTRON_RUN_AS_NODE cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .",
     "dev": "concurrently -k -r \"pnpm dev:renderer\" \"wait-on tcp:5173 && pnpm dev:electron\""
   },
   "dependencies": {

@@ -10,6 +10,11 @@ import { testConnection, matchPresentations, normalizeTitle, fetchJson } from '.
 import { syncPlaylist } from './playlistSync';
 import { saveCredentials as pcoSave, testCredentials as pcoTest, testHardcoded as pcoTestHardcoded, getNextPlan as pcoGetNextPlan } from './pco';
 
+if (process.env.ELECTRON_RUN_AS_NODE === '1') {
+  // The CLI runs our entry once in pure Node mode before launching Electron; bail out quickly.
+  process.exit(0);
+}
+
 function loadLocalEnvOnce() {
   if ((process as any).__PROSYNC_ENV_LOADED) return;
   const roots = [

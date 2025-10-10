@@ -1,7 +1,10 @@
 import https from 'node:https';
-import keytar from 'keytar';
 import fs from 'node:fs';
 import path from 'node:path';
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
+const keytar: typeof import('keytar') = require('keytar');
 
 export type PCOCredentials = { appId: string; secret: string };
 export type PCOTestResult = { ok: boolean; statusCode?: number; error?: string; bodyText?: string };
